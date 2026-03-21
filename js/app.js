@@ -1292,6 +1292,7 @@ const WindowMgr = {
       state.activeWindowId = state.currentRecording.windows[0]?.id || null;
     }
     this._refresh();
+    this.save(); // persist deletion immediately
   },
 
   clearAll() {
@@ -1299,16 +1300,37 @@ const WindowMgr = {
     if (state.currentRecording) state.currentRecording.windows = [];
     state.activeWindowId = null;
     this._refresh();
+    this.save(); // persist immediately
   },
 
   setActive(id) {
     state.activeWindowId = id;
     this._refresh();
     const win = this.getActive();
-    if (win?.analysis) UI.renderWindowMetrics(win);
-    else UI.renderAnalysisMetrics(state.currentRecording);
-    // Redraw tachogram to highlight selected window
-    const rr = state.currentRecording?.cleanRR || state.currentRecording?.rrMs;
+    const rr  = state.currentRecording?.cleanRR || state.currentRecording?.rrMs;
+    if (win?.analysis) {
+      UI.renderWindowMetrics(win);
+      // Update all signal charts with the windowed RR slice
+      if (rr) {
+        const slice = rr.slice(win.startBeat, win.endBeat + 1);
+        requestAnimationFrame(() => {
+          Charts.renderHistogram(slice);
+          Charts.renderDiffHist(slice);
+          Charts.renderPSD(null, slice);
+          Charts.renderPoincare(slice, win.analysis.td);
+        });
+      }
+    } else {
+      UI.renderAnalysisMetrics(state.currentRecording);
+      if (rr) {
+        requestAnimationFrame(() => {
+          Charts.renderHistogram(rr);
+          Charts.renderDiffHist(rr);
+          Charts.renderPSD(null, rr);
+          Charts.renderPoincare(rr, state.currentRecording.td);
+        });
+      }
+    }
     if (rr) Charts.renderInteractiveTachogram(rr, this.getAll(), null);
   },
 
@@ -1624,15 +1646,232 @@ const IO = {
   },
 
   exportReportHTML() {
-    const body = document.getElementById('reportBody');
-    if (!body) return;
     const rec = state.currentRecording;
-    if (!rec) return;
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Reporte HRV - ${rec.name}</title>
-    <style>body{font-family:sans-serif;max-width:900px;margin:40px auto;color:#111}h1{color:#007A8F}h2{color:#005E70;border-bottom:2px solid #007A8F;padding-bottom:4px}table{width:100%;border-collapse:collapse;margin-bottom:20px}th,td{padding:7px 10px;border:1px solid #ddd;text-align:left}th{background:#f0f4f8;font-size:12px}td.val{font-family:monospace;color:#007A8F;font-weight:600}.section{margin-bottom:24px}</style>
-    </head><body>${body.innerHTML}</body></html>`;
+    if (!rec) { UI.notify('Selecciona una grabación primero', 'error'); return; }
+    const html = this._buildStandaloneReportHTML(rec);
     this._download(html, `${rec.name}_reporte.html`, 'text/html');
     UI.notify('Reporte HTML exportado', 'success');
+  },
+  
+  _buildStandaloneReportHTML(rec) {
+    const m    = MathUtils.fmt;
+    const meta = rec.metadata || {};
+    const { td, fd, nl, comp } = rec;
+    const rr   = rec.cleanRR || rec.rrMs;
+    const prsa = rr && rr.length >= 120 ? NonStationary.prsa(rr) : null;
+    const MI   = METRIC_INFO;
+    const now     = new Date().toLocaleString('es');
+    const recDate = new Date(rec.created).toLocaleString('es');
+
+    const row  = (label, val, unit, normal, interp) =>
+      `<tr><td class="lc">${label}</td><td class="vc">${val ?? '—'}</td><td class="uc">${unit}</td><td class="nc">${normal}</td><td class="ic">${interp}</td></tr>`;
+    const mrow = (label, val) =>
+      `<tr><th>${label}</th><td ${!val ? 'class="nd"' : ''}>${val || '—'}</td></tr>`;
+
+    return `<!DOCTYPE html>
+      <html lang="es">
+      <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      <title>Reporte HRV — ${rec.name}</title>
+      <link rel="preconnect" href="https://fonts.googleapis.com">
+      <link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+      <style>
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{font-family:'Inter',system-ui,sans-serif;font-size:13px;color:#1a2535;background:#eaeff7;line-height:1.55;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .page{max-width:980px;margin:28px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 6px 40px rgba(0,0,0,.12)}
+      /* HEADER */
+      .rh{background:linear-gradient(135deg,#09253f 0%,#0d3a5a 55%,#1558a0 100%);padding:32px 44px;color:#fff}
+      .rh-brand{font-size:10px;font-weight:600;letter-spacing:2.8px;text-transform:uppercase;color:rgba(255,255,255,.4);margin-bottom:10px}
+      .rh-title{font-size:26px;font-weight:700;letter-spacing:-.4px;margin-bottom:4px}
+      .rh-sub{font-size:14px;color:rgba(255,255,255,.6);margin-bottom:22px;font-weight:300}
+      .rh-pills{display:flex;gap:28px;flex-wrap:wrap;padding-top:16px;border-top:1px solid rgba(255,255,255,.12)}
+      .rh-pill{font-size:10.5px;color:rgba(255,255,255,.5);line-height:1.8}
+      .rh-pill strong{display:block;font-size:12.5px;font-weight:600;color:#fff}
+      /* BODY */
+      .rb{padding:36px 44px}
+      /* SECTION */
+      .sec{margin-bottom:32px}
+      .sec-title{display:flex;align-items:center;gap:9px;font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#09253f;padding-bottom:8px;margin-bottom:16px;border-bottom:2px solid #d0dae9}
+      .sec-title-bar{width:4px;height:15px;background:linear-gradient(180deg,#1558a0,#0d3a5a);border-radius:2px;flex-shrink:0}
+      /* PATIENT GRID */
+      .pt-grid{display:grid;grid-template-columns:1fr 1fr;border:1px solid #d8e2f0;border-radius:8px;overflow:hidden}
+      .pt-grid table{width:100%;border-collapse:collapse}
+      .pt-grid th{background:#f1f5fb;padding:8px 14px;font-size:11px;font-weight:600;color:#4a5e78;text-align:left;width:145px;border-bottom:1px solid #d8e2f0;border-right:1px solid #d8e2f0}
+      .pt-grid td{padding:8px 14px;font-size:12px;border-bottom:1px solid #d8e2f0}
+      .pt-grid td.nd{color:#b0baca}
+      .pt-grid tr:last-child th,.pt-grid tr:last-child td{border-bottom:none}
+      /* METRICS TABLE */
+      .mt{width:100%;border-collapse:collapse;font-size:12px;border:1px solid #d8e2f0;border-radius:8px;overflow:hidden}
+      .mt thead tr{background:linear-gradient(90deg,#09253f,#1558a0)}
+      .mt thead th{padding:10px 14px;font-size:10.5px;font-weight:600;color:#fff;text-align:left;letter-spacing:.5px}
+      .mt tbody tr:nth-child(even){background:#f7fafd}
+      .mt tbody tr:hover{background:#ebf2fc}
+      .mt td{padding:8px 14px;border-bottom:1px solid #e8eef6;vertical-align:top;line-height:1.45}
+      .mt td.lc{font-weight:500;color:#2d3f55;min-width:190px}
+      .mt td.vc{font-family:'JetBrains Mono',monospace;font-weight:600;color:#1457b8;font-size:12.5px;min-width:80px}
+      .mt td.uc{color:#8a9bb8;min-width:55px;font-size:11px}
+      .mt td.nc{color:#257339;font-size:11px;min-width:150px}
+      .mt td.ic{color:#8a5200;font-size:11px}
+      .mt tbody tr:last-child td{border-bottom:none}
+      /* NOTE */
+      .note{background:#f0f5fc;border-left:3px solid #1558a0;padding:9px 14px;font-size:11px;color:#4a5e78;margin-top:10px;border-radius:0 6px 6px 0;line-height:1.55}
+      /* FOOTER */
+      .rf{background:#f1f5fb;padding:18px 44px;border-top:1px solid #d8e2f0;font-size:10.5px;color:#6a7d96;line-height:1.8}
+      .rf strong{color:#4a5e78}
+      /* PRINT */
+      @media print{
+        body{background:#fff}
+        .page{box-shadow:none;border-radius:0;max-width:100%;margin:0}
+        .rh,.mt thead tr{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+        .mt tbody tr:nth-child(even){-webkit-print-color-adjust:exact;print-color-adjust:exact}
+        .sec,.mt{break-inside:avoid}
+      }
+      </style>
+      </head>
+      <body>
+      <div class="page">
+      
+      <div class="rh">
+        <div class="rh-brand">HRV Studio · Análisis de Variabilidad de la Frecuencia Cardíaca</div>
+        <div class="rh-title">Reporte de Análisis HRV</div>
+        <div class="rh-sub">${rec.name}</div>
+        <div class="rh-pills">
+          <div class="rh-pill">Generado<strong>${now}</strong></div>
+          <div class="rh-pill">Grabación<strong>${recDate}</strong></div>
+          <div class="rh-pill">N latidos<strong>${rr?.length ?? '—'}</strong></div>
+          <div class="rh-pill">Duración<strong>${td?.totalDuration ? (td.totalDuration/60).toFixed(1)+' min' : '—'}</strong></div>
+          <div class="rh-pill">Software<strong>HRV Studio v1.0</strong></div>
+        </div>
+      </div>
+      
+      <div class="rb">
+      
+      <div class="sec">
+        <div class="sec-title"><span class="sec-title-bar"></span>Información del Sujeto / Protocolo</div>
+        <div class="pt-grid">
+          <table>
+            ${mrow('Paciente / ID', meta.name)}
+            ${mrow('Código de estudio', meta.id)}
+            ${mrow('Fecha de nacimiento', meta.dob)}
+            ${mrow('Sexo biológico', meta.sex)}
+            ${mrow('Edad', meta.age ? meta.age+' años' : null)}
+            ${mrow('Peso / Altura', (meta.weight||meta.height) ? (meta.weight ? meta.weight+' kg':'—')+' / '+(meta.height ? meta.height+' cm':'—') : null)}
+          </table>
+          <table>
+            ${mrow('Condición / Protocolo', meta.condition)}
+            ${mrow('Duración grabación', meta.duration || (td?.totalDuration ? (td.totalDuration/60).toFixed(1)+' min' : null))}
+            ${mrow('Medicamentos relevantes', meta.meds)}
+            ${mrow('Institución / Estudio', meta.institution)}
+            ${meta.notes ? mrow('Notas clínicas', meta.notes) : ''}
+          </table>
+        </div>
+      </div>
+      
+      ${td ? `<div class="sec">
+        <div class="sec-title"><span class="sec-title-bar"></span>Dominio Temporal</div>
+        <table class="mt">
+          <thead><tr><th>Métrica</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr></thead>
+          <tbody>
+            ${row('Media RR', m(td.mean,1), 'ms', MI.meanRR.r, MI.meanRR.a)}
+            ${row('FC media', m(td.meanHR,1), 'bpm', '60–100 bpm', 'Taquicardia >100 bpm o bradicardia <60 bpm pueden alterar interpretación de VFC')}
+            ${row('FC mínima / FC máxima', m(td.minHR,1)+' / '+m(td.maxHR,1), 'bpm', '—', 'Rango estrecho: rigidez autonómica; amplio: buena reserva cronotrópica')}
+            ${row('SDNN', m(td.sdnn,1), 'ms', MI.sdnn.r, MI.sdnn.a)}
+            ${row('RMSSD', m(td.rmssd,1), 'ms', MI.rmssd.r, MI.rmssd.a)}
+            ${row('pNN50', m(td.pnn50,1), '%', MI.pnn50.r, MI.pnn50.a)}
+            ${row('NN50', td.nn50, 'latidos', 'Depende de duración', 'Interpretar como % (pNN50); valor absoluto depende de N total')}
+            ${row('pNN20', m(td.pnn20,1), '%', MI.pnn20.r, MI.pnn20.a)}
+            ${row('CV (Coef. de variación)', m(td.cv,2), '%', MI.cv.r, MI.cv.a)}
+            ${row('Índice Triangular HRV', m(td.triIndex,1), 'u.a.', MI.triIndex.r, MI.triIndex.a)}
+            ${row('RR mínimo / RR máximo', td.minRR+' / '+td.maxRR, 'ms', '—', 'Valores extremos: posibles ectopias o artefactos; revisar tachograma')}
+            ${row('SD de FC', m(td.sdHR,1), 'bpm', '5–20 bpm', 'Alto: gran variabilidad; bajo: FC rígida')}
+            ${td.sdann != null ? row('SDANN', m(td.sdann,1), 'ms', MI.sdann.r, MI.sdann.a) : ''}
+            ${td.sdnni != null ? row('SDNNi', m(td.sdnni,1), 'ms', MI.sdnni.r, MI.sdnni.a) : ''}
+            ${row('N latidos total', td.n, 'latidos', '≥ 300 (5 min)', 'Grabaciones cortas reducen fiabilidad de todos los índices')}
+          </tbody>
+        </table>
+      </div>` : ''}
+      
+      ${fd ? `<div class="sec">
+        <div class="sec-title"><span class="sec-title-bar"></span>Dominio Frecuencial — Periodograma de Lomb-Scargle (no paramétrico)</div>
+        <table class="mt">
+          <thead><tr><th>Banda / Métrica</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr></thead>
+          <tbody>
+            ${row('VLF (0.003–0.04 Hz)', fd.vlf, 'ms²', MI.vlf.r, MI.vlf.a)}
+            ${row('LF (0.04–0.15 Hz)', fd.lf, 'ms²', MI.lf.r, MI.lf.a)}
+            ${row('HF (0.15–0.4 Hz)', fd.hf, 'ms²', MI.hf.r, MI.hf.a)}
+            ${row('Potencia Total (VLF+LF+HF)', fd.total, 'ms²', '—', 'Correlaciona con SDNN²; representa variabilidad global')}
+            ${row('LF normalizada', m(fd.lfNorm,1), 'n.u.', MI.lfNorm.r, MI.lfNorm.a)}
+            ${row('HF normalizada', m(fd.hfNorm,1), 'n.u.', MI.hfNorm.r, MI.hfNorm.a)}
+            ${row('Ratio LF/HF', m(fd.lfhf,3), '—', MI.lfhf.r, MI.lfhf.a)}
+            ${row('Frecuencia pico LF', fd.lfPeakF, 'Hz', MI.lfPeakF.r, MI.lfPeakF.a)}
+            ${row('Frecuencia pico HF', fd.hfPeakF, 'Hz', MI.hfPeakF.r, MI.hfPeakF.a)}
+          </tbody>
+        </table>
+      </div>` : ''}
+      
+      ${nl ? `<div class="sec">
+        <div class="sec-title"><span class="sec-title-bar"></span>Análisis No Lineal</div>
+        <table class="mt">
+          <thead><tr><th>Métrica</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr></thead>
+          <tbody>
+            ${row('SD1 — Poincaré (corto plazo)', m(nl.sd1,1), 'ms', MI.sd1.r, MI.sd1.a)}
+            ${row('SD2 — Poincaré (largo plazo)', m(nl.sd2,1), 'ms', MI.sd2.r, MI.sd2.a)}
+            ${row('SD1/SD2', m(nl.sd1sd2,3), '—', MI.sd1sd2.r, MI.sd1sd2.a)}
+            ${row('SampEn (Entropía Muestral)', nl.sampen != null ? m(nl.sampen,4) : '—', 'bits', MI.sampen.r, MI.sampen.a)}
+            ${row('ApEn (Entropía Aproximada)', nl.apen != null ? m(nl.apen,4) : '—', 'bits', MI.apen.r, MI.apen.a)}
+            ${nl.alpha1 != null ? row('DFA α1 (escala corta, 4–16 lat.)', m(nl.alpha1,4), '—', MI.alpha1.r, MI.alpha1.a) : ''}
+            ${nl.alpha2 != null ? row('DFA α2 (escala larga, 16–64 lat.)', m(nl.alpha2,4), '—', MI.alpha2.r, MI.alpha2.a) : ''}
+            ${nl.corrDim != null ? row('Dimensión de Correlación D2', m(nl.corrDim,3), '—', MI.corrDim.r, MI.corrDim.a) : ''}
+          </tbody>
+        </table>
+        <div class="note">Parámetros: SampEn/ApEn m=${state.settings.sampEnM}, r=${state.settings.sampEnR}×SDNN. DFA calculado según Peng et al. (1995). Correlation Dimension por método de Grassberger-Procaccia.</div>
+      </div>` : ''}
+      
+      ${comp ? `<div class="sec">
+        <div class="sec-title"><span class="sec-title-bar"></span>Índices Compuestos y Balance Autonómico</div>
+        <table class="mt">
+          <thead><tr><th>Índice</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr></thead>
+          <tbody>
+            ${comp.cvi != null ? row('CVI — Cardiac Vagal Index', m(comp.cvi,3), '—', MI.cvi.r, MI.cvi.a) : ''}
+            ${comp.csi != null ? row('CSI — Cardiac Sympathetic Index', m(comp.csi,2), '—', MI.csi.r, MI.csi.a) : ''}
+            ${comp.gsi != null ? row('GSI — Índice Geométrico Simpato-Vagal', m(comp.gsi,1), 'ms', MI.gsi.r, MI.gsi.a) : ''}
+            ${comp.stressIndex != null ? row('Índice de Estrés (Baevsky)', m(comp.stressIndex,2), 'u.a.', MI.stressIndex.r, MI.stressIndex.a) : ''}
+            ${comp.vagusPower != null ? row('Potencia Vagal (% espectral)', m(comp.vagusPower,1), '%', MI.vagusPower.r, MI.vagusPower.a) : ''}
+            ${comp.symPower != null ? row('Potencia Simpática (% espectral)', m(comp.symPower,1), '%', MI.symPower.r, MI.symPower.a) : ''}
+            ${comp.dc != null ? row('DC — Capacidad de Desaceleración', m(comp.dc,2), 'ms', MI.dc.r, MI.dc.a) : ''}
+            ${comp.ac != null ? row('AC — Capacidad de Aceleración', m(comp.ac,2), 'ms', MI.ac.r, MI.ac.a) : ''}
+          </tbody>
+        </table>
+      </div>` : ''}
+      
+      ${prsa ? `<div class="sec">
+        <div class="sec-title"><span class="sec-title-bar"></span>PRSA — Phase-Rectified Signal Averaging (Bauer et al. 2006)</div>
+        <table class="mt">
+          <thead><tr><th>Índice</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr></thead>
+          <tbody>
+            ${row('DC — Capacidad de Desaceleración', m(prsa.DC,2), 'ms', MI.dc.r, MI.dc.a)}
+            ${row('AC — Capacidad de Aceleración', m(prsa.AC,2), 'ms', MI.ac.r, MI.ac.a)}
+          </tbody>
+        </table>
+        <div class="note">L = ${prsa.L} latidos. DC &gt; 4.5 ms indica actividad vagal preservada. Predictor independiente de mortalidad cardíaca súbita (HR 5.6× si DC &lt; 2.5 ms, Bauer et al. Lancet 2006).</div>
+      </div>` : ''}
+      
+      </div>
+      
+      <div class="rf">
+        <strong>Referencias:</strong>
+        Task Force ESC/NASPE (1996) <em>Eur Heart J</em> 17:354–381 ·
+        Peng CK et al. (1995) <em>Chaos</em> 5:82 ·
+        Bauer A et al. (2006) <em>Lancet</em> 367:1674–1681 ·
+        Richman JS &amp; Moorman JR (2000) <em>Am J Physiol</em> 278:H2039.<br>
+        <strong>Aviso:</strong> Reporte generado automáticamente por HRV Studio v1.0 para fines informativos e investigación.
+        Los rangos de referencia son orientativos; la interpretación clínica debe considerar protocolo, duración del registro, edad, sexo y contexto del sujeto. No substituye criterio médico profesional.
+      </div>
+      
+      </div>
+      </body>
+      </html>`;
   },
 
   _download(content, filename, type) {
@@ -1937,7 +2176,7 @@ const UI = {
       <span>${win.label}</span>
       <span style="font-size:10px;color:var(--text-muted)">${win.analysis.beatCount}L · ${win.analysis.durationMin?.toFixed(1)}min</span>
       <button class="btn btn-secondary btn-sm" style="margin-left:auto;font-size:10px"
-        onclick="UI.renderAnalysisMetrics(state.currentRecording)">← Completo</button>
+        onclick="UI.restoreFullRecording()">← Completo</button>
     </div>`;
     el.innerHTML = hdr + this._buildMetricsPanel(td, fd, nl, comp);
   },
@@ -2229,6 +2468,22 @@ const UI = {
 
     return html || '<div class="empty-state" style="padding:20px"><div class="empty-state-title">Sin métricas disponibles</div></div>';
   },
+  
+  restoreFullRecording() {
+    state.activeWindowId = null;
+    this.renderAnalysisMetrics(state.currentRecording);
+    this.renderWindowsPanel(); // clear chip highlight
+    const rr = state.currentRecording?.cleanRR || state.currentRecording?.rrMs;
+    if (rr) {
+      requestAnimationFrame(() => {
+        Charts.renderHistogram(rr);
+        Charts.renderDiffHist(rr);
+        Charts.renderPSD(null, rr);
+        Charts.renderPoincare(rr, state.currentRecording.td);
+        Charts.renderInteractiveTachogram(rr, WindowMgr.getAll(), null);
+      });
+    }
+  },
 
   openReportModal() {
     const rec = state.currentRecording;
@@ -2489,6 +2744,12 @@ const App = {
   selectRecording(id) {
     const rec = state.recordings.find(r => r.id === id);
     if (!rec) return;
+    // Always recompute fd and comp fresh — prevents NaN from DB-stored stale spectral data
+    const rr = rec.cleanRR || rec.rrMs;
+    if (rr) {
+      rec.fd   = HRV.frequencyDomain(rr);
+      rec.comp = HRV.composite(rec.td, rec.fd, rec.nl);
+    }
     state.currentRecording = rec;
     state.activeWindowId   = rec.windows?.[0]?.id || null;
     state.windowMode       = false;
