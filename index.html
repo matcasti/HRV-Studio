@@ -228,21 +228,86 @@
           <div class="export-grid" id="exportCards"></div>
         </div>
         <div id="exportTabBatch" class="tab-content">
-          <div style="max-width:500px">
-            <p style="font-size:13px;color:var(--text-dim);margin-bottom:14px">Exporta múltiples grabaciones en un solo archivo</p>
-            <div class="form-group"><label class="form-label">Grabaciones a incluir</label>
-              <select class="form-select" id="batchSelection">
+          <div style="max-width:580px">
+            <p style="font-size:13px;color:var(--text-dim);margin-bottom:14px">Exporta grabaciones con filtros avanzados</p>
+
+            <div class="form-group">
+              <label class="form-label">Modo de selección</label>
+              <select class="form-select" id="batchMode" onchange="UI.updateBatchFilters()">
                 <option value="all">Todas las grabaciones</option>
-                <option value="folder">Carpeta actual</option>
-                <option value="tagged">Por etiqueta...</option>
+                <option value="folder">Por carpeta</option>
+                <option value="individual">Selección individual</option>
+                <option value="filter">Filtros avanzados</option>
               </select>
             </div>
-            <div class="form-group"><label class="form-label">Formato</label>
+
+            <!-- Carpeta -->
+            <div id="batchFolderGroup" class="form-group" style="display:none">
+              <label class="form-label">Carpeta</label>
+              <select class="form-select" id="batchFolder" onchange="UI._updateBatchPreview()"></select>
+            </div>
+
+            <!-- Selección individual -->
+            <div id="batchIndividualGroup" style="display:none;margin-bottom:10px">
+              <label class="form-label" style="display:block;margin-bottom:4px">Haz clic para seleccionar (múltiple)</label>
+              <div id="batchRecordingList" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;background:var(--card)"></div>
+            </div>
+
+            <!-- Filtros avanzados -->
+            <div id="batchFilterGroup" style="display:none">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                <div class="form-group">
+                  <label class="form-label">Sexo biológico</label>
+                  <select class="form-select" id="batchSex" onchange="UI._updateBatchPreview()">
+                    <option value="">Todos</option><option value="M">Masculino</option><option value="F">Femenino</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Etiqueta</label>
+                  <select class="form-select" id="batchTagFilter" onchange="UI._updateBatchPreview()">
+                    <option value="">Cualquiera</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Carpeta</label>
+                  <select class="form-select" id="batchFilterFolder" onchange="UI._updateBatchPreview()">
+                    <option value="">Todas</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">N latidos mínimo</label>
+                  <input type="number" class="form-input" id="batchBeatsMin" placeholder="Sin límite" onchange="UI._updateBatchPreview()">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Fecha desde</label>
+                  <input type="date" class="form-input" id="batchDateFrom" onchange="UI._updateBatchPreview()">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Fecha hasta</label>
+                  <input type="date" class="form-input" id="batchDateTo" onchange="UI._updateBatchPreview()">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">SDNN mínimo (ms)</label>
+                  <input type="number" class="form-input" id="batchSdnnMin" placeholder="Sin límite" onchange="UI._updateBatchPreview()">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">SDNN máximo (ms)</label>
+                  <input type="number" class="form-input" id="batchSdnnMax" placeholder="Sin límite" onchange="UI._updateBatchPreview()">
+                </div>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Formato de exportación</label>
               <select class="form-select" id="batchFormat">
-                <option value="csv">CSV (tabla de métricas)</option>
-                <option value="json">JSON completo</option>
-                <option value="html">Reporte HTML múltiple</option>
+                <option value="csv">CSV resumen — métricas clave (1 fila por grabación)</option>
+                <option value="csv_full">CSV completo — todas las métricas y ventanas</option>
+                <option value="json">JSON — datos completos con metadatos</option>
               </select>
+            </div>
+
+            <div id="batchPreview" style="font-size:12px;color:var(--text-muted);margin-bottom:10px;padding:5px 10px;background:var(--card);border-radius:6px;border:1px solid var(--border)">
+              Cargando…
             </div>
             <button class="btn btn-primary" onclick="IO.exportBatch()">📦 Exportar lote</button>
           </div>

@@ -1562,23 +1562,115 @@ const IO = {
 
   async exportMetricsCSV(recording) {
     const { td, fd, nl, comp } = recording;
-    const rows = [];
+    const rr   = recording.cleanRR || recording.rrMs;
+    const meta = recording.metadata || {};
+    const prsa = rr && rr.length >= 120 ? NonStationary.prsa(rr) : null;
+
+    const rows = [['Categoría', 'Métrica', 'Valor', 'Unidad', 'Rango Normal']];
+    const add  = (cat, label, val, unit = '', ref = '') =>
+      rows.push([cat, label, val ?? '', unit, ref]);
+
+    // Metadatos
+    add('Metadatos', 'Nombre grabación',    recording.name);
+    add('Metadatos', 'Paciente / ID',       meta.name       || '');
+    add('Metadatos', 'Código estudio',      meta.id         || '');
+    add('Metadatos', 'Fecha grabación',     new Date(recording.created).toLocaleString('es'));
+    add('Metadatos', 'Sexo biológico',      meta.sex        || '');
+    add('Metadatos', 'Edad',               meta.age         || '', 'años');
+    add('Metadatos', 'Condición/Protocolo', meta.condition  || '');
+    add('Metadatos', 'Institución',         meta.institution|| '');
+    add('Metadatos', 'Medicamentos',        meta.meds       || '');
+
+    // Dominio temporal
     if (td) {
-      rows.push(['DOMINIO TIEMPO','','']);
-      const tdRows = [['Mean RR','ms',td.mean],['SDNN','ms',td.sdnn],['RMSSD','ms',td.rmssd],['NN50','',td.nn50],['pNN50','%',td.pnn50],['Mean HR','bpm',td.meanHR],['SD HR','bpm',td.sdHR],['Min HR','bpm',td.minHR],['Max HR','bpm',td.maxHR],['CV','%',td.cv],['Triangular Index','',td.triIndex]];
-      rows.push(...tdRows);
+      add('Tiempo', 'N latidos',         td.n,          'latidos', '≥300 (5 min)');
+      add('Tiempo', 'Duración',          td.totalDuration ? (td.totalDuration/60).toFixed(2) : '', 'min');
+      add('Tiempo', 'Mean RR',           td.mean,       'ms',   '600–1000');
+      add('Tiempo', 'Median RR',         td.medianRR,   'ms');
+      add('Tiempo', 'Min RR',            td.minRR,      'ms');
+      add('Tiempo', 'Max RR',            td.maxRR,      'ms');
+      add('Tiempo', 'RR Range',          td.rrRange,    'ms');
+      add('Tiempo', 'SDNN',              td.sdnn,       'ms',   '50–100');
+      add('Tiempo', 'RMSSD',             td.rmssd,      'ms',   '20–50');
+      add('Tiempo', 'NN50',              td.nn50,       'latidos');
+      add('Tiempo', 'pNN50',             td.pnn50,      '%',    '>5–15');
+      add('Tiempo', 'NN20',              td.nn20,       'latidos');
+      add('Tiempo', 'pNN20',             td.pnn20,      '%',    '>30');
+      add('Tiempo', 'CV',                td.cv,         '%',    '3–10');
+      add('Tiempo', 'Índice Triangular', td.triIndex,   'u.a.', '≥15');
+      add('Tiempo', 'FC media',          td.meanHR,     'bpm',  '60–100');
+      add('Tiempo', 'SD FC',             td.sdHR,       'bpm',  '5–20');
+      add('Tiempo', 'FC mínima',         td.minHR,      'bpm');
+      add('Tiempo', 'FC máxima',         td.maxHR,      'bpm');
+      if (td.sdann != null) add('Tiempo', 'SDANN', td.sdann, 'ms', '>40');
+      if (td.sdnni != null) add('Tiempo', 'SDNNi', td.sdnni, 'ms', '>25');
     }
+
+    // Dominio frecuencial
     if (fd) {
-      rows.push(['DOMINIO FRECUENCIA','','']);
-      rows.push(['VLF','ms²',fd.vlf],['LF','ms²',fd.lf],['HF','ms²',fd.hf],['Total Power','ms²',fd.total],['LF norm','nu',fd.lfNorm],['HF norm','nu',fd.hfNorm],['LF/HF ratio','',fd.lfhf]);
+      add('Frecuencia', 'VLF',           fd.vlf,      'ms²', '<1500');
+      add('Frecuencia', 'LF',            fd.lf,       'ms²', '500–1500');
+      add('Frecuencia', 'HF',            fd.hf,       'ms²', '200–800');
+      add('Frecuencia', 'Potencia Total',fd.total,    'ms²');
+      add('Frecuencia', 'LF norm',       fd.lfNorm,   'n.u.','54±4');
+      add('Frecuencia', 'HF norm',       fd.hfNorm,   'n.u.','29±3');
+      add('Frecuencia', 'LF/HF',         fd.lfhf,     '',    '1.5–2.0');
+      add('Frecuencia', 'Pico LF',       fd.lfPeakF,  'Hz',  '~0.10');
+      add('Frecuencia', 'Pico HF',       fd.hfPeakF,  'Hz',  '~0.25');
     }
+
+    // No lineal
     if (nl) {
-      rows.push(['NO LINEAL','','']);
-      rows.push(['SD1','ms',nl.sd1],['SD2','ms',nl.sd2],['SD1/SD2','',nl.sd1sd2],['SampEn','',nl.sampen],['ApEn','',nl.apen],['DFA α1','',nl.alpha1],['DFA α2','',nl.alpha2]);
+      add('No Lineal', 'SD1',               nl.sd1,    'ms',  '15–40');
+      add('No Lineal', 'SD2',               nl.sd2,    'ms',  '50–130');
+      add('No Lineal', 'SD1/SD2',           nl.sd1sd2, '',    '0.25–0.50');
+      add('No Lineal', 'SampEn',            nl.sampen, 'bits','1.0–2.0');
+      add('No Lineal', 'ApEn',              nl.apen,   'bits','0.7–1.5');
+      add('No Lineal', 'DFA α1',            nl.alpha1, '',    '0.75–1.25');
+      add('No Lineal', 'DFA α2',            nl.alpha2, '',    '0.85–1.35');
+      add('No Lineal', 'Dim. Correlación D2',nl.corrDim,'',  '');
     }
-    let csv = 'Métrica,Unidad,Valor\n';
-    rows.forEach(r => { csv += r.map(v => `"${v ?? ''}"`).join(',') + '\n'; });
-    this._download(csv, `${recording.name}_metrics.csv`, 'text/csv');
+
+    // Índices compuestos
+    if (comp) {
+      add('Compuestos', 'CVI',                       comp.cvi,         '',    '3.5–5.0');
+      add('Compuestos', 'CSI',                       comp.csi,         '',    '2.0–5.0');
+      add('Compuestos', 'GSI',                       comp.gsi,         'ms',  '30–80');
+      add('Compuestos', 'Índice de Estrés (Baevsky)',comp.stressIndex, 'u.a.','<150');
+      add('Compuestos', 'Potencia Vagal',            comp.vagusPower,  '%',   '30–50');
+      add('Compuestos', 'Potencia Simpática',        comp.symPower,    '%',   '20–45');
+      add('Compuestos', 'DC',                        comp.dc,          'ms',  '>4.5');
+      add('Compuestos', 'AC',                        comp.ac,          'ms',  '');
+    }
+
+    // PRSA
+    if (prsa) {
+      add('PRSA', 'DC (Deceleration Capacity)', prsa.DC, 'ms', '>4.5');
+      add('PRSA', 'AC (Acceleration Capacity)', prsa.AC, 'ms', '');
+    }
+
+    // Ventanas de análisis
+    for (const w of (recording.windows || [])) {
+      if (!w.analysis) continue;
+      const { td: wt, fd: wf, nl: wn } = w.analysis;
+      const p = `Ventana "${w.label}"`;
+      if (wt) {
+        add(p,'SDNN',    wt.sdnn,   'ms'); add(p,'RMSSD',   wt.rmssd,  'ms');
+        add(p,'pNN50',   wt.pnn50,  '%'); add(p,'FC media', wt.meanHR, 'bpm');
+        add(p,'CV',      wt.cv,     '%'); add(p,'N latidos',wt.n,      'lat.');
+      }
+      if (wf) {
+        add(p,'LF',   wf.lf,    'ms²'); add(p,'HF',   wf.hf,    'ms²');
+        add(p,'LF/HF',wf.lfhf,  '');   add(p,'LF norm',wf.lfNorm,'n.u.');
+      }
+      if (wn) {
+        add(p,'SD1',    wn.sd1,    'ms'); add(p,'SD2',    wn.sd2,    'ms');
+        add(p,'SampEn', wn.sampen, 'bits');
+      }
+    }
+
+    const csv = rows.map(r => r.map(v => `"${v ?? ''}"`).join(',')).join('\n');
+    this._download(csv, `${recording.name}_metricas_completas.csv`, 'text/csv');
   },
 
   exportJSON(recording) {
@@ -1622,27 +1714,112 @@ const IO = {
   },
 
   async exportBatch() {
-    const format = document.getElementById('batchFormat').value;
-    const recs = state.recordings;
-    if (!recs.length) { UI.notify('No hay grabaciones para exportar', 'error'); return; }
+    const format = document.getElementById('batchFormat')?.value || 'csv';
+    const recs   = this._getBatchRecordings();
+    if (!recs.length) { UI.notify('Sin grabaciones que coincidan con los filtros', 'error'); return; }
 
     if (format === 'csv') {
-      const headers = ['name','patient','date','beats','meanRR','sdnn','rmssd','pnn50','meanHR','sdHR','vlf','lf','hf','lfhf','sd1','sd2','sampen','alpha1'];
+      // Resumen: columnas clave, una fila por grabación
+      const headers = [
+        'Nombre','Paciente','Sexo','Edad','Fecha','Condición','Carpeta','Etiquetas',
+        'N_latidos','Duración_min','MeanRR','SDNN','RMSSD','pNN50','pNN20','CV','TriIndex',
+        'FC_media','FC_SD','FC_min','FC_max',
+        'VLF','LF','HF','PotTotal','LF_norm','HF_norm','LF_HF','Pico_LF','Pico_HF',
+        'SD1','SD2','SD1_SD2','SampEn','ApEn','DFA_a1','DFA_a2',
+        'CVI','CSI','GSI','Stress_Index','Vagus_Power','Sym_Power','DC','AC'
+      ];
       let csv = headers.join(',') + '\n';
       for (const r of recs) {
-        const meta = r.metadata || {};
-        const td = r.td || {}, fd = r.fd || {}, nl = r.nl || {};
-        csv += [r.name, meta.name||'', new Date(r.created).toLocaleDateString(),
-          r.rrMs?.length||0, td.mean, td.sdnn, td.rmssd, td.pnn50, td.meanHR, td.sdHR,
-          fd.vlf, fd.lf, fd.hf, fd.lfhf, nl.sd1, nl.sd2, nl.sampen, nl.alpha1
+        const meta = r.metadata || {}, td = r.td || {}, fd = r.fd || {}, nl = r.nl || {}, comp = r.comp || {};
+        const folder   = state.folders.find(f => f.id === r.folderId);
+        const tagNames = (r.tagIds || []).map(id => state.tags.find(t => t.id === id)?.name).filter(Boolean).join(';');
+        csv += [
+          r.name, meta.name || '', meta.sex || '', meta.age || '',
+          new Date(r.created).toLocaleDateString('es'), meta.condition || '',
+          folder?.name || '', tagNames,
+          r.rrMs?.length || 0,
+          td.totalDuration ? (td.totalDuration / 60).toFixed(2) : '',
+          td.mean, td.sdnn, td.rmssd, td.pnn50, td.pnn20, td.cv, td.triIndex,
+          td.meanHR, td.sdHR, td.minHR, td.maxHR,
+          fd.vlf, fd.lf, fd.hf, fd.total, fd.lfNorm, fd.hfNorm, fd.lfhf, fd.lfPeakF, fd.hfPeakF,
+          nl.sd1, nl.sd2, nl.sd1sd2, nl.sampen, nl.apen, nl.alpha1, nl.alpha2,
+          comp.cvi, comp.csi, comp.gsi, comp.stressIndex, comp.vagusPower, comp.symPower, comp.dc, comp.ac
         ].map(v => `"${v ?? ''}"`).join(',') + '\n';
       }
-      this._download(csv, 'HRVStudio_batch.csv', 'text/csv');
+      this._download(csv, 'HRVStudio_lote_resumen.csv', 'text/csv');
+
+    } else if (format === 'csv_full') {
+      // Completo: todas las métricas, igual que exportMetricsCSV pero multi-grabación
+      let headerRow = null;
+      const dataRows = [];
+      for (const r of recs) {
+        const { td, fd, nl, comp } = r;
+        const prsa = r.cleanRR?.length >= 120 ? NonStationary.prsa(r.cleanRR) : null;
+        const meta = r.metadata || {};
+        const row = {
+          Nombre: r.name, Paciente: meta.name || '', Sexo: meta.sex || '', Edad: meta.age || '',
+          Fecha: new Date(r.created).toLocaleDateString('es'), Condicion: meta.condition || '',
+          N_latidos: td?.n, Duracion_min: td?.totalDuration ? (td.totalDuration/60).toFixed(2) : '',
+          MeanRR: td?.mean, MedianaRR: td?.medianRR, MinRR: td?.minRR, MaxRR: td?.maxRR, SDNN: td?.sdnn,
+          RMSSD: td?.rmssd, NN50: td?.nn50, pNN50: td?.pnn50, NN20: td?.nn20, pNN20: td?.pnn20,
+          CV: td?.cv, TriIndex: td?.triIndex, FC_media: td?.meanHR, SD_FC: td?.sdHR,
+          FC_min: td?.minHR, FC_max: td?.maxHR, SDANN: td?.sdann, SDNNi: td?.sdnni,
+          VLF: fd?.vlf, LF: fd?.lf, HF: fd?.hf, Total_Power: fd?.total,
+          LF_norm: fd?.lfNorm, HF_norm: fd?.hfNorm, LF_HF: fd?.lfhf, Pico_LF: fd?.lfPeakF, Pico_HF: fd?.hfPeakF,
+          SD1: nl?.sd1, SD2: nl?.sd2, SD1_SD2: nl?.sd1sd2, SampEn: nl?.sampen, ApEn: nl?.apen,
+          DFA_a1: nl?.alpha1, DFA_a2: nl?.alpha2, CorrDim: nl?.corrDim,
+          CVI: comp?.cvi, CSI: comp?.csi, GSI: comp?.gsi, Stress_Index: comp?.stressIndex,
+          Vagus_Power: comp?.vagusPower, Sym_Power: comp?.symPower,
+          DC: comp?.dc ?? prsa?.DC, AC: comp?.ac ?? prsa?.AC
+        };
+        if (!headerRow) headerRow = Object.keys(row);
+        dataRows.push(Object.values(row).map(v => v ?? ''));
+      }
+      const csv = [headerRow, ...dataRows].map(r => r.map(v => `"${v}"`).join(',')).join('\n');
+      this._download(csv, 'HRVStudio_lote_completo.csv', 'text/csv');
+
     } else if (format === 'json') {
-      const data = recs.map(r => ({ ...r, rawData: undefined }));
-      this._download(JSON.stringify(data, null, 2), 'HRVStudio_batch.json', 'application/json');
+      const data = recs.map(r => { const d = { ...r }; delete d.rawData; return d; });
+      this._download(JSON.stringify(data, null, 2), 'HRVStudio_lote.json', 'application/json');
     }
-    UI.notify(`Lote exportado (${recs.length} grabaciones)`, 'success');
+
+    UI.notify(`Lote exportado: ${recs.length} grabación${recs.length !== 1 ? 'es' : ''}`, 'success');
+  },
+
+  /** Devuelve las grabaciones que coinciden con los filtros activos en el panel de lote. */
+  _getBatchRecordings() {
+    const mode = document.getElementById('batchMode')?.value || 'all';
+    let recs = [...state.recordings];
+
+    if (mode === 'folder') {
+      const fid = document.getElementById('batchFolder')?.value;
+      if (fid) recs = recs.filter(r => r.folderId === fid);
+
+    } else if (mode === 'individual') {
+      const selected = [...document.querySelectorAll('#batchRecordingList [data-rid].selected')]
+        .map(el => el.dataset.rid);
+      if (selected.length) recs = recs.filter(r => selected.includes(r.id));
+
+    } else if (mode === 'filter') {
+      const sex      = document.getElementById('batchSex')?.value;
+      const tagId    = document.getElementById('batchTagFilter')?.value;
+      const filtFid  = document.getElementById('batchFilterFolder')?.value;
+      const dateFrom = document.getElementById('batchDateFrom')?.value;
+      const dateTo   = document.getElementById('batchDateTo')?.value;
+      const sdnnMin  = parseFloat(document.getElementById('batchSdnnMin')?.value);
+      const sdnnMax  = parseFloat(document.getElementById('batchSdnnMax')?.value);
+      const beatsMin = parseFloat(document.getElementById('batchBeatsMin')?.value);
+
+      if (sex)             recs = recs.filter(r => (r.metadata?.sex || '') === sex);
+      if (tagId)           recs = recs.filter(r => (r.tagIds || []).includes(tagId));
+      if (filtFid)         recs = recs.filter(r => r.folderId === filtFid);
+      if (dateFrom)        recs = recs.filter(r => r.created >= new Date(dateFrom).getTime());
+      if (dateTo)          recs = recs.filter(r => r.created <= new Date(dateTo).getTime() + 86399999);
+      if (!isNaN(sdnnMin)) recs = recs.filter(r => (r.td?.sdnn  ?? 0)        >= sdnnMin);
+      if (!isNaN(sdnnMax)) recs = recs.filter(r => (r.td?.sdnn  ?? Infinity)  <= sdnnMax);
+      if (!isNaN(beatsMin))recs = recs.filter(r => (r.rrMs?.length ?? 0)      >= beatsMin);
+    }
+    return recs;
   },
 
   exportReportHTML() {
@@ -1659,6 +1836,8 @@ const IO = {
     const { td, fd, nl, comp } = rec;
     const rr   = rec.cleanRR || rec.rrMs;
     const prsa = rr && rr.length >= 120 ? NonStationary.prsa(rr) : null;
+    const ls   = rr && rr.length >= 30  ? LombScargle.compute(rr, state.settings) : null;
+    const wins = rec.windows || [];
     const MI   = METRIC_INFO;
     const now     = new Date().toLocaleString('es');
     const recDate = new Date(rec.created).toLocaleString('es');
@@ -1676,6 +1855,7 @@ const IO = {
       <title>Reporte HRV — ${rec.name}</title>
       <link rel="preconnect" href="https://fonts.googleapis.com">
       <link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
       <style>
       *{box-sizing:border-box;margin:0;padding:0}
       body{font-family:'Inter',system-ui,sans-serif;font-size:13px;color:#1a2535;background:#eaeff7;line-height:1.55;-webkit-print-color-adjust:exact;print-color-adjust:exact}
@@ -1725,8 +1905,13 @@ const IO = {
         .page{box-shadow:none;border-radius:0;max-width:100%;margin:0}
         .rh,.mt thead tr{-webkit-print-color-adjust:exact;print-color-adjust:exact}
         .mt tbody tr:nth-child(even){-webkit-print-color-adjust:exact;print-color-adjust:exact}
-        .sec,.mt{break-inside:avoid}
+        .sec,.mt,.chart-wrap{break-inside:avoid}
       }
+      .chart-wrap{background:#f7fafd;border:1px solid #d8e2f0;border-radius:8px;padding:14px}
+      .chart-label{font-size:9.5px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:#4a5e78;margin-bottom:8px}
+      .ch2col{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+      .ch2col-big{display:grid;grid-template-columns:3fr 2fr;gap:14px}
+      .chart-legend{font-size:9px;color:#8a9bb8;margin-bottom:6px;display:flex;gap:10px;flex-wrap:wrap}
       </style>
       </head>
       <body>
@@ -1768,6 +1953,35 @@ const IO = {
         </div>
       </div>
       
+      <div class="sec">
+        <div class="sec-title"><span class="sec-title-bar"></span>Representaciones Gráficas del Análisis</div>
+        <div class="ch2col">
+          <div class="chart-wrap">
+            <div class="chart-label">Tacograma de Intervalos RR${rr && rr.length > 2000 ? ' (primeros 2\u2009000 latidos)' : ''}</div>
+            <div style="height:155px;position:relative"><canvas id="rpt-tacho"></canvas></div>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-label">Histograma de Intervalos RR</div>
+            <div style="height:155px;position:relative"><canvas id="rpt-hist"></canvas></div>
+          </div>
+        </div>
+        <div class="ch2col-big">
+          <div class="chart-wrap">
+            <div class="chart-label">Densidad Espectral de Potencia — Lomb-Scargle</div>
+            <div class="chart-legend">
+              <span><span style="color:rgba(21,88,160,.9)">■</span> VLF (${state.settings.vlfMin}–${state.settings.vlfMax} Hz)</span>
+              <span><span style="color:rgba(192,120,0,.85)">■</span> LF (${state.settings.lfMin}–${state.settings.lfMax} Hz)</span>
+              <span><span style="color:rgba(20,87,184,.8)">■</span> HF (${state.settings.hfMin}–${state.settings.hfMax} Hz)</span>
+            </div>
+            <div style="height:170px;position:relative"><canvas id="rpt-psd"></canvas></div>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-label">Diagrama de Poincaré — RR(n) vs RR(n+1)</div>
+            <canvas id="rpt-poincare" style="display:block;width:100%;height:200px"></canvas>
+          </div>
+        </div>
+      </div>
+
       ${td ? `<div class="sec">
         <div class="sec-title"><span class="sec-title-bar"></span>Dominio Temporal</div>
         <table class="mt">
@@ -1856,6 +2070,8 @@ const IO = {
         </table>
         <div class="note">L = ${prsa.L} latidos. DC &gt; 4.5 ms indica actividad vagal preservada. Predictor independiente de mortalidad cardíaca súbita (HR 5.6× si DC &lt; 2.5 ms, Bauer et al. Lancet 2006).</div>
       </div>` : ''}
+
+      ${IO._buildWindowsReportSection(wins, true)}
       
       </div>
       
@@ -1870,8 +2086,176 @@ const IO = {
       </div>
       
       </div>
+      <script id="hrv-chart-data" type="application/json">${JSON.stringify({
+        rr:   rr ? Array.from(rr.slice(0, 2000)) : [],
+        psdF: ls ? ls.freqs : null,
+        psdP: ls ? ls.psd   : null,
+        vlfMin: state.settings.vlfMin, vlfMax: state.settings.vlfMax,
+        lfMin:  state.settings.lfMin,  lfMax:  state.settings.lfMax,
+        hfMin:  state.settings.hfMin,  hfMax:  state.settings.hfMax
+      })}</script>
+      <script>
+      (function(){
+        var D;
+        try { D=JSON.parse(document.getElementById('hrv-chart-data').textContent); } catch(e){ return; }
+        var C={a:'#1457b8',s:'#c07800',g:'#e8eef6',t:'#8a9bb8'};
+        var BF={family:'JetBrains Mono,monospace',size:9};
+        function ax(sx,sy){
+          return {responsive:true,maintainAspectRatio:false,animation:false,
+            plugins:{legend:{display:false},tooltip:{enabled:false}},
+            scales:{
+              x:Object.assign({grid:{color:C.g,lineWidth:.5},ticks:{color:C.t,font:BF,maxTicksLimit:8}},sx||{}),
+              y:Object.assign({grid:{color:C.g,lineWidth:.5},ticks:{color:C.t,font:BF}},sy||{})
+            }};
+        }
+        document.addEventListener('DOMContentLoaded',function(){
+          try{rTacho();}   catch(e){}
+          try{rHist();}    catch(e){}
+          try{rPSD();}     catch(e){}
+          try{rPoincare();}catch(e){}
+        });
+        function rTacho(){
+          var el=document.getElementById('rpt-tacho');
+          if(!el||!D.rr.length||typeof Chart==='undefined') return;
+          new Chart(el,{type:'line',
+            data:{labels:D.rr.map(function(_,i){return i+1;}),
+              datasets:[{data:D.rr,borderColor:C.a,borderWidth:1.2,pointRadius:0,fill:false,tension:0}]},
+            options:ax(
+              {title:{display:true,text:'Latido #',color:C.t,font:{size:9}}},
+              {title:{display:true,text:'RR (ms)',color:C.t,font:{size:9}}})});
+        }
+        function rHist(){
+          var el=document.getElementById('rpt-hist');
+          if(!el||!D.rr.length||typeof Chart==='undefined') return;
+          var bW=20,mn=Math.floor(Math.min.apply(null,D.rr)/bW)*bW;
+          var mx=Math.ceil(Math.max.apply(null,D.rr)/bW)*bW;
+          var bins={};
+          for(var b=mn;b<=mx;b+=bW) bins[b]=0;
+          D.rr.forEach(function(v){ var b=Math.floor(v/bW)*bW; if(bins[b]!==undefined)bins[b]++; });
+          new Chart(el,{type:'bar',
+            data:{labels:Object.keys(bins),
+              datasets:[{data:Object.values(bins),backgroundColor:C.a+'AA',borderColor:C.a,borderWidth:1,barPercentage:1,categoryPercentage:1}]},
+            options:ax(
+              {title:{display:true,text:'RR (ms)',color:C.t,font:{size:9}},ticks:{color:C.t,font:BF,maxTicksLimit:10}},
+              {title:{display:true,text:'N',color:C.t,font:{size:9}}})});
+        }
+        function rPSD(){
+          var el=document.getElementById('rpt-psd');
+          if(!el||!D.psdF||!D.psdP||typeof Chart==='undefined') return;
+          var bg=D.psdF.map(function(f){
+            if(f>=D.vlfMin&&f<D.vlfMax) return'rgba(21,88,160,.55)';
+            if(f>=D.lfMin &&f<D.lfMax)  return'rgba(192,120,0,.55)';
+            if(f>=D.hfMin &&f<D.hfMax)  return'rgba(20,87,184,.45)';
+            return'rgba(100,120,150,.1)';
+          });
+          new Chart(el,{type:'bar',
+            data:{labels:D.psdF.map(function(f){return f.toFixed(3);}),
+              datasets:[{data:D.psdP,backgroundColor:bg,borderColor:'transparent',borderWidth:0,barPercentage:1.2,categoryPercentage:1}]},
+            options:ax(
+              {title:{display:true,text:'Frecuencia (Hz)',color:C.t,font:{size:9}},ticks:{color:C.t,font:BF,maxTicksLimit:8}},
+              {title:{display:true,text:'ms\u00B2/Hz',color:C.t,font:{size:9}}})});
+        }
+        function rPoincare(){
+          var cv=document.getElementById('rpt-poincare');
+          if(!cv||!D.rr.length) return;
+          var W=cv.offsetWidth||250,H=cv.offsetHeight||200;
+          cv.width=W; cv.height=H;
+          var ctx=cv.getContext('2d'),pad=26;
+          var mn=Math.min.apply(null,D.rr)*.97,mx=Math.max.apply(null,D.rr)*1.03;
+          var sX=function(v){return pad+(v-mn)/(mx-mn)*(W-2*pad);};
+          var sY=function(v){return H-pad-(v-mn)/(mx-mn)*(H-2*pad);};
+          ctx.fillStyle='#f7fafd'; ctx.fillRect(0,0,W,H);
+          ctx.strokeStyle='#d8e2f0'; ctx.lineWidth=.5;
+          ctx.beginPath(); ctx.moveTo(pad,pad); ctx.lineTo(pad,H-pad);
+          ctx.moveTo(pad,H-pad); ctx.lineTo(W-pad,H-pad); ctx.stroke();
+          ctx.strokeStyle='rgba(192,120,0,.3)'; ctx.setLineDash([4,4]); ctx.lineWidth=.8;
+          ctx.beginPath(); ctx.moveTo(sX(mn),sY(mn)); ctx.lineTo(sX(mx),sY(mx)); ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle='rgba(20,87,184,.42)';
+          var pts=Math.min(D.rr.length-1,900);
+          for(var i=0;i<pts;i++){ctx.beginPath();ctx.arc(sX(D.rr[i]),sY(D.rr[i+1]),1.8,0,6.283);ctx.fill();}
+          ctx.fillStyle=C.t; ctx.font='9px JetBrains Mono,monospace'; ctx.textAlign='center';
+          ctx.fillText('RR(n)',W/2,H-3);
+          ctx.save(); ctx.translate(10,H/2); ctx.rotate(-1.5708); ctx.fillText('RR(n+1)',0,0); ctx.restore();
+        }
+      })();
+      </script>
       </body>
       </html>`;
+  },
+  
+  /** Genera la sección HTML de comparativa por ventanas de análisis.
+   *  @param {object[]} wins      – recording.windows
+   *  @param {boolean}  standalone – true → clases CSS del reporte exportado
+   */
+  _buildWindowsReportSection(wins, standalone = true) {
+    const valid = (wins || []).filter(w => w.analysis);
+    if (!valid.length) return '';
+    const m = MathUtils.fmt;
+
+    // Métricas a mostrar en la tabla comparativa
+    const metrics = [
+      ['N latidos',  'lat.',  w => w.analysis.beatCount ?? (w.endBeat - w.startBeat)],
+      ['Duración',   'min',   w => m(w.analysis.durationMin, 2)],
+      ['SDNN',       'ms',    w => m(w.analysis.td?.sdnn,  1)],
+      ['RMSSD',      'ms',    w => m(w.analysis.td?.rmssd, 1)],
+      ['pNN50',      '%',     w => m(w.analysis.td?.pnn50, 1)],
+      ['pNN20',      '%',     w => m(w.analysis.td?.pnn20, 1)],
+      ['FC media',   'bpm',   w => m(w.analysis.td?.meanHR,1)],
+      ['CV',         '%',     w => m(w.analysis.td?.cv,    2)],
+      ['VLF',        'ms²',   w => w.analysis.fd?.vlf  ?? '—'],
+      ['LF',         'ms²',   w => w.analysis.fd?.lf   ?? '—'],
+      ['HF',         'ms²',   w => w.analysis.fd?.hf   ?? '—'],
+      ['LF/HF',      '',      w => m(w.analysis.fd?.lfhf,  3)],
+      ['LF norm',    'n.u.',  w => m(w.analysis.fd?.lfNorm,1)],
+      ['HF norm',    'n.u.',  w => m(w.analysis.fd?.hfNorm,1)],
+      ['SD1',        'ms',    w => m(w.analysis.nl?.sd1,   1)],
+      ['SD2',        'ms',    w => m(w.analysis.nl?.sd2,   1)],
+      ['SD1/SD2',    '',      w => m(w.analysis.nl?.sd1sd2,3)],
+      ['SampEn',     'bits',  w => m(w.analysis.nl?.sampen,3)],
+      ['DFA α1',     '',      w => m(w.analysis.nl?.alpha1,3)],
+    ];
+
+    // Estilos según contexto
+    const s = standalone;
+    const thS  = s ? `style="padding:8px 12px;background:linear-gradient(90deg,#09253f,#1558a0);color:#fff;font-size:10.5px;font-weight:600;text-align:left;border:1px solid #c0cfe0"` : `style="background:var(--card2);padding:7px 10px;font-size:11px;color:var(--text-dim);text-align:left;border:1px solid var(--border)"`;
+    const tdS  = s ? `style="padding:7px 12px;border:1px solid #d8e2f0;font-size:11px;color:#2d3f55;font-weight:500"` : `style="padding:6px 10px;border:1px solid var(--border);font-size:11px;color:var(--text)"`;
+    const unitS= s ? `style="padding:7px 12px;border:1px solid #d8e2f0;font-size:10px;color:#8a9bb8"` : `style="padding:6px 10px;border:1px solid var(--border);font-size:10px;color:var(--text-muted)"`;
+    const vcS  = s ? `style="padding:7px 12px;border:1px solid #d8e2f0;font-family:'JetBrains Mono',monospace;font-size:12px;color:#1457b8;font-weight:600"` : `style="padding:6px 10px;border:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent)"`;
+    const dotS = (c) => `display:inline-block;width:9px;height:9px;border-radius:50%;background:${c};margin-right:5px;vertical-align:middle;flex-shrink:0`;
+
+    const headerRow = `<tr>
+      <th ${thS}>Métrica</th><th ${thS}>Unidad</th>
+      ${valid.map(w => `<th ${thS}>
+        <span style="${dotS(w.color)}"></span>${w.label}
+        <span style="font-size:9px;font-weight:400;opacity:.7;display:block">${w.startBeat}–${w.endBeat} lat.</span>
+      </th>`).join('')}
+    </tr>`;
+
+    const dataRows = metrics.map(([label, unit, getter]) =>
+      `<tr><td ${tdS}>${label}</td><td ${unitS}>${unit}</td>
+        ${valid.map(w => `<td ${vcS}>${getter(w) ?? '—'}</td>`).join('')}
+      </tr>`
+    ).join('');
+
+    const secClass  = s ? 'class="sec"'          : 'class="report-section"';
+    const titleClass = s ? 'class="sec-title"'   : 'class="report-section-title"';
+    const titleBar  = s ? '<span class="sec-title-bar"></span>' : '';
+
+    return `
+      <div ${secClass}>
+        <div ${titleClass}>${titleBar}ANÁLISIS POR VENTANAS TEMPORALES</div>
+        <p style="font-size:11px;color:${s ? '#6a7d96' : 'var(--text-dim)'};margin-bottom:12px">
+          ${valid.length} ventana${valid.length !== 1 ? 's' : ''} definida${valid.length !== 1 ? 's' : ''}.
+          Comparativa de métricas principales entre segmentos del registro.
+        </p>
+        <div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse;min-width:460px">
+            <thead>${headerRow}</thead>
+            <tbody>${dataRows}</tbody>
+          </table>
+        </div>
+      </div>`;
   },
 
   _download(content, filename, type) {
@@ -2612,6 +2996,8 @@ const UI = {
         <div style="font-size:10px;color:var(--text-muted);margin-top:6px">L = ${prsa.L} latidos. DC > 4.5 ms indica actividad vagal preservada. Predictor independiente de mortalidad cardíaca.</div>
       </div>` : ''}
 
+      ${IO._buildWindowsReportSection(rec.windows || [], false)}
+
       <div style="margin-top:24px;padding-top:12px;border-top:1px solid var(--border);font-size:10px;color:var(--text-muted)">
         <strong>Referencias:</strong> Task Force ESC/NASPE (1996) Eur Heart J 17:354-381 · Peng et al. (1995) Chaos 5:82 · Bauer et al. (2006) Lancet 367:1674 · Richman & Moorman (2000) AJP 278:H2039.<br>
         <strong>Nota:</strong> Este reporte es generado automáticamente para fines informativos/investigación. Los rangos de referencia son orientativos; su interpretación clínica debe considerar el protocolo, la duración del registro, la edad, el sexo y el contexto del sujeto.
@@ -2657,6 +3043,59 @@ const UI = {
         <div class="export-card-sub">Informe clínico/investigación detallado</div>
       </div>
     `;
+  },
+  
+  updateBatchFilters() {
+    const mode = document.getElementById('batchMode')?.value || 'all';
+    const show = (id, v) => { const el = document.getElementById(id); if (el) el.style.display = v ? '' : 'none'; };
+    show('batchFolderGroup',     mode === 'folder');
+    show('batchIndividualGroup', mode === 'individual');
+    show('batchFilterGroup',     mode === 'filter');
+
+    if (mode === 'folder') {
+      const sel = document.getElementById('batchFolder');
+      if (sel) sel.innerHTML = state.folders.length
+        ? state.folders.map(f =>
+            `<option value="${f.id}">${f.name} (${state.recordings.filter(r => r.folderId === f.id).length})</option>`
+          ).join('')
+        : '<option value="">Sin carpetas definidas</option>';
+    }
+    if (mode === 'individual') {
+      const list = document.getElementById('batchRecordingList');
+      if (list) list.innerHTML = state.recordings.length
+        ? state.recordings.map(r =>
+            `<div style="padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--border);font-size:12px;transition:background 0.1s"
+              data-rid="${r.id}" onclick="UI._toggleBatchRec(this)">
+              📋 ${r.name}
+              <span style="color:var(--text-muted)"> · ${r.td?.sdnn ?? '?'} ms SDNN · ${r.rrMs?.length ?? '?'} lat.</span>
+            </div>`).join('')
+        : '<div style="padding:10px;color:var(--text-muted);font-size:12px">Sin grabaciones</div>';
+    }
+    if (mode === 'filter') {
+      const tagSel = document.getElementById('batchTagFilter');
+      if (tagSel) tagSel.innerHTML = '<option value="">Cualquier etiqueta</option>' +
+        state.tags.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+      const foldSel = document.getElementById('batchFilterFolder');
+      if (foldSel) foldSel.innerHTML = '<option value="">Todas las carpetas</option>' +
+        state.folders.map(f => `<option value="${f.id}">${f.name}</option>`).join('');
+    }
+    this._updateBatchPreview();
+  },
+
+  _toggleBatchRec(el) {
+    el.classList.toggle('selected');
+    el.style.background = el.classList.contains('selected') ? 'var(--accent-glow)' : '';
+    el.style.color      = el.classList.contains('selected') ? 'var(--accent)' : '';
+    this._updateBatchPreview();
+  },
+
+  _updateBatchPreview() {
+    const el = document.getElementById('batchPreview');
+    if (!el) return;
+    const recs = IO._getBatchRecordings();
+    el.textContent = recs.length
+      ? `${recs.length} grabación${recs.length !== 1 ? 'es' : ''} seleccionada${recs.length !== 1 ? 's' : ''} para exportar`
+      : 'Sin grabaciones que coincidan con los filtros actuales';
   },
 
   updateStorageInfo() {
@@ -2736,6 +3175,7 @@ const App = {
       const rec = state.currentRecording;
       if (rec) document.getElementById('exportRecordingName').textContent = `Grabación activa: ${rec.name}`;
       UI.renderExportCards();
+      UI.updateBatchFilters(); // Rellena listas y preview con el estado actual
     }
   },
 
