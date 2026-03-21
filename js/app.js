@@ -22,8 +22,15 @@ const state = {
     vlfMin: 0.003, vlfMax: 0.04,
     lfMin: 0.04, lfMax: 0.15,
     hfMin: 0.15, hfMax: 0.4,
-    sampEnM: 2, sampEnR: 0.2
-  }
+    sampEnM: 2, sampEnR: 0.2,
+    slidingWinBeats: 300, slidingStepBeats: 60
+  },
+  // Analysis windows per recording
+  windows: [],          // [{id, label, color, startBeat, endBeat, analysis}]
+  activeWindowId: null,
+  windowMode: false,    // true = user is drawing a new window
+  windowDraft: null,    // {startBeat, endBeat} during drag
+  dynamicTab: 'sliding' // active tab in non-stationary panel
 };
 
 // ===== INDEXEDDB MODULE =====
@@ -175,6 +182,77 @@ const FFT = {
   }
 };
 
+// ===== LOMB-SCARGLE PERIODOGRAM =====
+// Works directly on unevenly-sampled RR intervals — no resampling required.
+const LombScargle = {
+  /**
+   * One-sided PSD in ms²/Hz, Parseval-normalized (∑PSD·df ≈ variance).
+   * @param {number[]} rrMs  RR intervals in ms
+   * @param {object}   s     settings (vlfMin, hfMax, …)
+   */
+  compute(rrMs, s = state.settings) {
+    const n = rrMs.length;
+    if (n < 30) return null;
+
+    // Cumulative time axis in seconds
+    const t = new Float64Array(n);
+    for (let i = 1; i < n; i++) t[i] = t[i - 1] + rrMs[i - 1] / 1000;
+
+    const mean = MathUtils.mean(rrMs);
+    const y    = rrMs.map(v => v - mean);
+    const variance = MathUtils.variance(rrMs);
+    if (variance < 0.1) return null;
+
+    const freqMin = s.vlfMin  || 0.003;
+    const freqMax = (s.hfMax  || 0.4) + 0.06;
+    const nFreqs  = 800;                       // resolution vs speed balance
+    const df      = (freqMax - freqMin) / (nFreqs - 1);
+
+    const freqs = new Array(nFreqs);
+    const raw   = new Float64Array(nFreqs);
+
+    for (let fi = 0; fi < nFreqs; fi++) {
+      const f     = freqMin + fi * df;
+      const omega = 2 * Math.PI * f;
+      freqs[fi]   = f;
+      let re = 0, im = 0;
+      for (let i = 0; i < n; i++) {
+        const phi = omega * t[i];
+        re +=  y[i] * Math.cos(phi);
+        im -=  y[i] * Math.sin(phi);
+      }
+      raw[fi] = re * re + im * im;             // |NDFT(f)|²
+    }
+
+    // Parseval normalization: scale so ∑psd·df = variance
+    let rawSum = 0;
+    for (let fi = 0; fi < nFreqs; fi++) rawSum += raw[fi];
+    const scale = rawSum > 0 ? variance / (rawSum * df) : 1;
+    const psd   = Array.from(raw, v => v * scale);
+
+    return { freqs, psd, df };
+  },
+
+  bandPower(freqs, psd, fLo, fHi) {
+    const df = freqs.length > 1 ? freqs[1] - freqs[0] : 0.001;
+    let sum = 0;
+    for (let i = 0; i < freqs.length; i++) {
+      if (freqs[i] >= fLo && freqs[i] < fHi) sum += psd[i];
+    }
+    return sum * df;
+  },
+
+  peakFreq(freqs, psd, fLo, fHi) {
+    let maxP = -Infinity, peak = 0;
+    for (let i = 0; i < freqs.length; i++) {
+      if (freqs[i] >= fLo && freqs[i] < fHi && psd[i] > maxP) {
+        maxP = psd[i]; peak = freqs[i];
+      }
+    }
+    return peak;
+  }
+};
+
 // ===== HRV ENGINE =====
 const HRV = {
   // Convert raw data to ms
@@ -265,51 +343,37 @@ const HRV = {
     };
   },
 
+  // REEMPLAZAR todo el método frequencyDomain por este:
   frequencyDomain(rrMs, settings = state.settings) {
-    const { fsResample: fs, vlfMin, vlfMax, lfMin, lfMax, hfMin, hfMax } = settings;
-    const n = rrMs.length;
-    if (n < 30) return null;
+    const { vlfMin, vlfMax, lfMin, lfMax, hfMin, hfMax } = settings;
+    if (!rrMs || rrMs.length < 30) return null;
     try {
-      const resampled = FFT.resample(rrMs, fs);
-      if (resampled.length < 16) return null;
-      const { power, size } = FFT.transform(resampled);
-      const freqRes = fs / size;
-
-      let vlf = 0, lf = 0, hf = 0, total = 0;
-      let lfPeakF = 0, lfPeakP = 0, hfPeakF = 0, hfPeakP = 0;
-
-      for (let i = 1; i < size >> 1; i++) {
-        const f = i * freqRes;
-        const p = power[i] * 2;
-        if (f >= vlfMin && f < vlfMax) vlf += p;
-        if (f >= lfMin && f < lfMax) { lf += p; if (p > lfPeakP) { lfPeakP = p; lfPeakF = f; } }
-        if (f >= hfMin && f < hfMax) { hf += p; if (p > hfPeakP) { hfPeakP = p; hfPeakF = f; } }
-        if (f >= vlfMin && f < hfMax) total += p;
-      }
-      // Scale to ms²
-      const scale = freqRes;
-      vlf *= scale; lf *= scale; hf *= scale; total *= scale;
-      const lfNorm = (lf + hf) > 0 ? (lf / (lf + hf)) * 100 : 0;
-      const hfNorm = (lf + hf) > 0 ? (hf / (lf + hf)) * 100 : 0;
-      const lfhf = hf > 0 ? lf / hf : null;
-
-      // Build PSD curve for chart
-      const psdFreqs = [], psdPow = [];
-      for (let i = 1; i < size >> 1; i++) {
-        const f = i * freqRes;
-        if (f < hfMax + 0.05) { psdFreqs.push(f); psdPow.push(power[i] * 2 * scale); }
-      }
-
+      const ls = LombScargle.compute(rrMs, settings);
+      if (!ls) return null;
+      const { freqs, psd } = ls;
+  
+      const vlf   = LombScargle.bandPower(freqs, psd, vlfMin, vlfMax);
+      const lf    = LombScargle.bandPower(freqs, psd, lfMin,  lfMax);
+      const hf    = LombScargle.bandPower(freqs, psd, hfMin,  hfMax);
+      const total = vlf + lf + hf;
+  
+      const lfNorm  = (lf + hf) > 0 ? lf / (lf + hf) * 100 : 0;
+      const hfNorm  = (lf + hf) > 0 ? hf / (lf + hf) * 100 : 0;
+      const lfhf    = hf > 0 ? lf / hf : null;
+      const lfPeakF = LombScargle.peakFreq(freqs, psd, lfMin, lfMax);
+      const hfPeakF = LombScargle.peakFreq(freqs, psd, hfMin, hfMax);
+  
       return {
         vlf: Math.round(vlf), lf: Math.round(lf), hf: Math.round(hf),
         total: Math.round(total),
-        lfNorm: Math.round(lfNorm * 10) / 10, hfNorm: Math.round(hfNorm * 10) / 10,
-        lfhf: lfhf ? Math.round(lfhf * 100) / 100 : null,
+        lfNorm: Math.round(lfNorm * 10) / 10,
+        hfNorm: Math.round(hfNorm * 10) / 10,
+        lfhf:   lfhf != null ? Math.round(lfhf * 100) / 100 : null,
         lfPeakF: Math.round(lfPeakF * 1000) / 1000,
         hfPeakF: Math.round(hfPeakF * 1000) / 1000,
-        psdFreqs, psdPow
+        psdFreqs: freqs, psdPow: psd   // field names kept for chart compatibility
       };
-    } catch (e) { console.warn('FreqDomain error:', e); return null; }
+    } catch(e) { console.warn('FreqDomain LS error:', e); return null; }
   },
 
   nonLinear(rrMs) {
@@ -822,7 +886,147 @@ const Charts = {
 
     // Store params for click detection
     canvas._chartParams = { pad, plotW, plotH, n, minV, maxV, rrMs };
-  }
+  },
+  
+  // ── Interactive tachogram with draggable analysis windows ──
+  renderInteractiveTachogram(rrMs, windows = [], draft = null) {
+    const canvas = document.getElementById('tachogramInteractive');
+    if (!canvas) return;
+    const par = canvas.parentElement;
+    const W = canvas.width  = par.offsetWidth  || 800;
+    const H = canvas.height = par.offsetHeight || 160;
+    const ctx = canvas.getContext('2d');
+    const pad = { t: 12, r: 12, b: 28, l: 46 };
+    const pW  = W - pad.l - pad.r, pH = H - pad.t - pad.b;
+    const n   = rrMs.length;
+    if (n < 2) return;
+
+    const minV = Math.min(...rrMs) * 0.97, maxV = Math.max(...rrMs) * 1.03;
+    const toX  = i => pad.l + (i / (n - 1)) * pW;
+    const toY  = v => pad.t + (1 - (v - minV) / (maxV - minV)) * pH;
+
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = getComputedStyle(document.documentElement)
+                    .getPropertyValue('--card').trim() || '#10151F';
+    ctx.fillRect(0, 0, W, H);
+
+    // Grid lines
+    ctx.strokeStyle = this.border(); ctx.lineWidth = 0.5;
+    for (let i = 0; i <= 4; i++) {
+      const y = pad.t + i / 4 * pH;
+      const v = maxV - i / 4 * (maxV - minV);
+      ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+      ctx.fillStyle = this.textDim(); ctx.font = '9px JetBrains Mono';
+      ctx.textAlign = 'right';
+      ctx.fillText(Math.round(v), pad.l - 2, y + 3);
+    }
+    ctx.textAlign = 'left';
+
+    // Existing windows
+    for (const win of windows) {
+      const x1 = toX(win.startBeat), x2 = toX(win.endBeat);
+      const isActive = win.id === state.activeWindowId;
+      ctx.fillStyle = win.color + (isActive ? '30' : '18');
+      ctx.fillRect(x1, pad.t, x2 - x1, pH);
+      ctx.strokeStyle = win.color + (isActive ? 'EE' : '70');
+      ctx.lineWidth = isActive ? 2 : 1;
+      ctx.strokeRect(x1, pad.t, x2 - x1, pH);
+      // Label
+      ctx.font = `${isActive ? 'bold ' : ''}10px Outfit`;
+      ctx.fillStyle = win.color;
+      ctx.fillText(win.label, Math.min(Math.max(x1 + 3, pad.l), W - pad.r - 60), pad.t + 11);
+    }
+
+    // Draft window (being drawn)
+    if (draft) {
+      const x1 = toX(Math.min(draft.startBeat, draft.endBeat));
+      const x2 = toX(Math.max(draft.startBeat, draft.endBeat));
+      ctx.fillStyle = 'rgba(0,194,212,0.12)';
+      ctx.fillRect(x1, pad.t, x2 - x1, pH);
+      ctx.strokeStyle = 'rgba(0,194,212,0.9)'; ctx.lineWidth = 2;
+      ctx.setLineDash([5, 3]);
+      ctx.strokeRect(x1, pad.t, x2 - x1, pH);
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(0,194,212,0.9)'; ctx.font = 'bold 10px JetBrains Mono';
+      ctx.fillText(`${Math.abs(draft.endBeat - draft.startBeat)}L`, x1 + 4, pad.t + 11);
+    }
+
+    // RR signal (decimate if large)
+    const step = Math.max(1, Math.ceil(n / 2000));
+    ctx.strokeStyle = this.accent(); ctx.lineWidth = 1.2; ctx.beginPath();
+    for (let i = 0; i < n; i += step) {
+      const x = toX(i), y = toY(rrMs[i]);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // X-axis tick labels
+    ctx.fillStyle = this.textDim(); ctx.font = '9px JetBrains Mono'; ctx.textAlign = 'center';
+    for (let i = 0; i <= 5; i++) {
+      const b = Math.round(i / 5 * (n - 1));
+      ctx.fillText(b, toX(b), H - 4);
+    }
+    ctx.fillText('latido #', W / 2, H - 4);
+    ctx.textAlign = 'left';
+
+    // Store params for mouse events
+    canvas._p = { pad, pW, pH, n, rrMs, toX,
+      toBeat: x => Math.round(Math.max(0, Math.min(n - 1, (x - pad.l) / pW * (n - 1)))) };
+  },
+
+  // ── Sliding-window time series ──
+  renderSlidingLine(canvasId, data, yKey, yLabel, color) {
+    this.destroyChart(canvasId);
+    const ctx = this.getCtx(canvasId);
+    if (!ctx || !data.length) return;
+    state.charts[canvasId] = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: data.map(d => d.t_center.toFixed(1)),
+        datasets: [{ data: data.map(d => d[yKey] ?? null),
+          borderColor: color || this.accent(), borderWidth: 1.5,
+          pointRadius: 0, fill: false, tension: 0.25, spanGaps: true }]
+      },
+      options: {
+        ...this.baseOptions(), animation: false,
+        scales: {
+          x: { ...this.baseOptions().scales.x,
+            title: { display: true, text: 'Tiempo (min)', color: this.textDim(), font: { size: 9 } },
+            ticks: { maxTicksLimit: 7, ...this.baseOptions().scales.x.ticks }},
+          y: { ...this.baseOptions().scales.y,
+            title: { display: true, text: yLabel, color: this.textDim(), font: { size: 9 } }}
+        }
+      }
+    });
+  },
+
+  // ── PRSA curves ──
+  renderPRSACurves(prsa) {
+    ['prsaDecChart','prsaAccChart'].forEach(id => this.destroyChart(id));
+    if (!prsa) return;
+    const L = prsa.L, labels = Array.from({ length: 2 * L }, (_, i) => i - L);
+    [['prsaDecChart', prsa.prsa_d, this.secondary(), 'DC (desaceleración)'],
+     ['prsaAccChart', prsa.prsa_a, this.accent(),    'AC (aceleración)']
+    ].forEach(([id, data, color, title]) => {
+      const ctx = this.getCtx(id); if (!ctx) return;
+      state.charts[id] = new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets: [{ data, borderColor: color, borderWidth: 1.5, pointRadius: 0, fill: false }] },
+        options: {
+          ...this.baseOptions(), animation: false,
+          plugins: { ...this.baseOptions().plugins,
+            title: { display: true, text: title, color: this.textDim(), font: { size: 11 } }},
+          scales: {
+            x: { ...this.baseOptions().scales.x,
+              title: { display: true, text: 'k (latidos desde ancla)', color: this.textDim(), font: { size: 9 } },
+              ticks: { maxTicksLimit: 7, ...this.baseOptions().scales.x.ticks }},
+            y: { ...this.baseOptions().scales.y,
+              title: { display: true, text: 'RR (ms)', color: this.textDim(), font: { size: 9 } }}
+          }
+        }
+      });
+    });
+  },
 };
 
 // ===== DATA CLEANING =====
@@ -979,6 +1183,219 @@ const Clean = {
     if (state.removedBeats.has(nearest)) state.removedBeats.delete(nearest);
     else state.removedBeats.add(nearest);
     this.updateStats(); this.redraw();
+  }
+};
+
+// ===== ANALYSIS WINDOW MANAGER =====
+const WindowMgr = {
+  COLORS: ['#00C2D4','#FFA020','#00C896','#6488FF','#FF6B6B','#C084FC','#34D399','#FBBF24'],
+
+  _nextColor() {
+    const used = new Set((state.currentRecording?.windows || []).map(w => w.color));
+    return this.COLORS.find(c => !used.has(c)) || this.COLORS[state.windows.length % this.COLORS.length];
+  },
+
+  getAll()    { return state.currentRecording?.windows || []; },
+  getActive() { return this.getAll().find(w => w.id === state.activeWindowId) || null; },
+
+  create(startBeat, endBeat) {
+    if (!state.currentRecording) return null;
+    if (!state.currentRecording.windows) state.currentRecording.windows = [];
+    const sb = Math.min(startBeat, endBeat);
+    const eb = Math.max(startBeat, endBeat);
+    if (eb - sb < 9) return null;           // need ≥10 beats
+
+    const win = {
+      id:         Date.now() + '',
+      label:      `Ventana ${state.currentRecording.windows.length + 1}`,
+      color:      this._nextColor(),
+      startBeat:  sb,
+      endBeat:    eb,
+      analysis:   null
+    };
+    win.analysis = this._analyze(win);
+    state.currentRecording.windows.push(win);
+    state.activeWindowId = win.id;
+    return win;
+  },
+
+  rename(id, label) {
+    const win = this.getAll().find(w => w.id === id);
+    if (win && label.trim()) { win.label = label.trim(); this._refresh(); }
+  },
+
+  resize(id, startBeat, endBeat) {
+    const win = this.getAll().find(w => w.id === id);
+    if (!win) return;
+    win.startBeat = Math.min(startBeat, endBeat);
+    win.endBeat   = Math.max(startBeat, endBeat);
+    win.analysis  = this._analyze(win);
+    this._refresh();
+  },
+
+  delete(id) {
+    if (!state.currentRecording?.windows) return;
+    state.currentRecording.windows = state.currentRecording.windows.filter(w => w.id !== id);
+    if (state.activeWindowId === id) {
+      state.activeWindowId = state.currentRecording.windows[0]?.id || null;
+    }
+    this._refresh();
+  },
+
+  clearAll() {
+    if (!confirm('¿Eliminar todas las ventanas de análisis?')) return;
+    if (state.currentRecording) state.currentRecording.windows = [];
+    state.activeWindowId = null;
+    this._refresh();
+  },
+
+  setActive(id) {
+    state.activeWindowId = id;
+    this._refresh();
+    const win = this.getActive();
+    if (win?.analysis) UI.renderWindowMetrics(win);
+    else UI.renderAnalysisMetrics(state.currentRecording);
+    // Redraw tachogram to highlight selected window
+    const rr = state.currentRecording?.cleanRR || state.currentRecording?.rrMs;
+    if (rr) Charts.renderInteractiveTachogram(rr, this.getAll(), null);
+  },
+
+  toggleAddMode() {
+    state.windowMode = !state.windowMode;
+    state.windowDraft = null;
+    const canvas = document.getElementById('tachogramInteractive');
+    if (canvas) {
+      canvas.className = state.windowMode ? 'mode-add' : '';
+    }
+    UI.renderWindowsPanel();
+  },
+
+  async save() {
+    if (state.currentRecording) await DB.put('recordings', state.currentRecording);
+  },
+
+  _analyze(win) {
+    const rr = state.currentRecording?.cleanRR || state.currentRecording?.rrMs;
+    if (!rr) return null;
+    const slice = rr.slice(win.startBeat, win.endBeat + 1);
+    if (slice.length < 10) return null;
+    const td = HRV.timeDomain(slice);
+    const fd = HRV.frequencyDomain(slice);
+    const nl = HRV.nonLinear(slice);
+    const comp = HRV.composite(td, fd, nl);
+    return { td, fd, nl, comp, beatCount: slice.length, durationMin: MathUtils.sum(slice) / 60000 };
+  },
+
+  _refresh() {
+    UI.renderWindowsPanel();
+    const rr = state.currentRecording?.cleanRR || state.currentRecording?.rrMs;
+    if (rr) Charts.renderInteractiveTachogram(rr, this.getAll(), null);
+  }
+};
+
+// ===== NON-STATIONARY / TIME-VARYING HRV =====
+const NonStationary = {
+  /**
+   * Sliding-window time-domain metrics.
+   * Returns [{t_center (min), sdnn, rmssd, meanHR, pnn50, start, end}]
+   */
+  sliding(rrMs, winBeats, stepBeats) {
+    const n = rrMs.length;
+    winBeats  = Math.min(winBeats  || state.settings.slidingWinBeats,  n);
+    stepBeats = Math.min(stepBeats || state.settings.slidingStepBeats, winBeats);
+    if (winBeats < 30) return [];
+
+    const cumT = new Float64Array(n + 1);
+    for (let i = 0; i < n; i++) cumT[i + 1] = cumT[i] + rrMs[i];
+
+    const results = [];
+    for (let s = 0; s + winBeats <= n; s += stepBeats) {
+      const seg = rrMs.slice(s, s + winBeats);
+      const td  = HRV.timeDomain(seg);
+      if (!td) continue;
+      const t_center = (cumT[s] + cumT[s + winBeats]) / 2 / 60000;
+      results.push({ t_center, start: s, end: s + winBeats,
+        sdnn: td.sdnn, rmssd: td.rmssd, meanHR: td.meanHR,
+        pnn50: td.pnn50, lf: null, hf: null, lfhf: null });
+    }
+    return results;
+  },
+
+  /**
+   * Sliding-window frequency metrics (slower — uses LS on each window).
+   * Only run if fewer than 500 windows.
+   */
+  slidingFreq(rrMs, winBeats, stepBeats) {
+    const sliding = this.sliding(rrMs, winBeats, stepBeats);
+    if (sliding.length > 400) return sliding; // skip if too many steps
+    for (const w of sliding) {
+      const seg = rrMs.slice(w.start, w.end);
+      const fd  = HRV.frequencyDomain(seg);
+      if (fd) { w.lf = fd.lf; w.hf = fd.hf; w.lfhf = fd.lfhf; }
+    }
+    return sliding;
+  },
+
+  /**
+   * Phase-Rectified Signal Averaging (PRSA).
+   * Deceleration Capacity (DC) and Acceleration Capacity (AC).
+   * Ref: Bauer et al. (2006).
+   */
+  prsa(rrMs, L = 30) {
+    const n = rrMs.length;
+    if (n < L * 4) return null;
+
+    const accum = (condition) => {
+      let cnt = 0;
+      const buf = new Float64Array(2 * L);
+      for (let a = L; a < n - L; a++) {
+        if (!condition(a)) continue;
+        for (let k = -L; k < L; k++) buf[k + L] += rrMs[a + k];
+        cnt++;
+      }
+      return cnt > 4 ? Array.from(buf, v => v / cnt) : null;
+    };
+
+    const prsa_d = accum(a => rrMs[a] >= rrMs[a - 1]);  // deceleration anchors
+    const prsa_a = accum(a => rrMs[a] <  rrMs[a - 1]);  // acceleration anchors
+    if (!prsa_d || !prsa_a) return null;
+
+    // DC = capacity of heart rate deceleration (should be positive)
+    const DC = (prsa_d[L] + prsa_d[L + 1] - prsa_d[L - 1] - prsa_d[L - 2]) / 4;
+    const AC = (prsa_a[L] + prsa_a[L + 1] - prsa_a[L - 1] - prsa_a[L - 2]) / 4;
+    return { DC: Math.round(DC * 10) / 10, AC: Math.round(AC * 10) / 10, prsa_d, prsa_a, L };
+  },
+
+  /**
+   * Auto-segment the recording into N equal parts.
+   * Useful for rest-exercise-rest protocols when segment boundaries are unknown.
+   */
+  autoSegment(rrMs, nSeg = 3) {
+    const n  = rrMs.length;
+    const sz = Math.floor(n / nSeg);
+    return Array.from({ length: nSeg }, (_, i) => {
+      const start = i * sz, end = (i === nSeg - 1) ? n : start + sz;
+      const seg   = rrMs.slice(start, end);
+      const td    = HRV.timeDomain(seg);
+      const fd    = HRV.frequencyDomain(seg);
+      const nl    = HRV.nonLinear(seg);
+      return { i, start, end, label: `Segmento ${i + 1}`,
+               durationMin: MathUtils.sum(seg) / 60000, td, fd, nl };
+    });
+  },
+
+  /**
+   * Running RMSSD (beat-by-beat, window of winBeats beats).
+   * Very fast — useful for real-time trend lines.
+   */
+  runningRMSSD(rrMs, winBeats = 100) {
+    const result = [];
+    for (let i = winBeats; i <= rrMs.length; i++) {
+      const seg   = rrMs.slice(i - winBeats, i);
+      const diffs = seg.slice(1).map((v, j) => (v - seg[j]) ** 2);
+      result.push({ idx: i, rmssd: Math.sqrt(MathUtils.mean(diffs)) });
+    }
+    return result;
   }
 };
 
@@ -1389,65 +1806,257 @@ const UI = {
   renderAnalysis(rec) {
     if (!rec) return;
     this.renderAnalysisHeader(rec);
+  
+    // Ensure windows array exists
+    if (!rec.windows) rec.windows = [];
+    if (!state.activeWindowId && rec.windows.length)
+      state.activeWindowId = rec.windows[0].id;
+  
+    const rr = rec.cleanRR || rec.rrMs;
+    this.renderAnalysisMetrics(rec);   // left panel
+    this.renderAnalysisCenter(rec, rr); // center panel
+  },
+  
+  renderAnalysisMetrics(rec) {
     const { td, fd, nl, comp } = rec;
-    const center = document.getElementById('analyzeCenter');
-    const left = document.getElementById('analyzeLeft');
-
-    // Metrics panel
-    left.innerHTML = this._buildMetricsPanel(td, fd, nl, comp);
-
-    // Charts
-    center.innerHTML = `
-      <div style="margin-bottom:14px">
-        <div class="chart-card">
-          <div class="chart-card-header">
-            <span class="chart-card-title">Tacograma RR</span>
-            <span class="chart-card-sub">${rec.rrMs?.length || 0} latidos · ${td ? MathUtils.fmt(td.totalDuration/60, 1) : '?'} min</span>
+    const leftEl = document.getElementById('analyzeLeft');
+    leftEl.innerHTML = `
+      <div id="windowsPanelContainer"></div>
+      <div id="mainMetricsContainer">${this._buildMetricsPanel(td, fd, nl, comp)}</div>
+    `;
+    this.renderWindowsPanel();
+  },
+  
+  renderWindowsPanel() {
+    const el = document.getElementById('windowsPanelContainer');
+    if (!el) return;
+    const wins    = WindowMgr.getAll();
+    const isAdding = state.windowMode;
+    const activeId = state.activeWindowId;
+  
+    el.innerHTML = `
+      <div class="metric-panel">
+        <div class="mp-header open" onclick="this.classList.toggle('open');this.nextElementSibling.style.display=this.classList.contains('open')?'block':'none'">
+          <span>🔲</span>
+          <span class="mp-title">Ventanas de análisis</span>
+          <span style="font-size:10px;color:var(--text-muted);margin-right:4px">${wins.length ? wins.length : ''}</span>
+          <span class="mp-toggle">▼</span>
+        </div>
+        <div class="mp-body">
+          <div style="display:flex;gap:4px;margin-bottom:8px">
+            <button class="btn btn-sm ${isAdding ? 'btn-primary' : 'btn-secondary'}" style="flex:1"
+              onclick="WindowMgr.toggleAddMode()">
+              ${isAdding ? '✕ Cancelar' : '+ Nueva ventana'}
+            </button>
+            ${wins.length ? `<button class="btn btn-danger btn-sm" onclick="WindowMgr.clearAll()" title="Eliminar todas">🗑</button>` : ''}
+            ${wins.length ? `<button class="btn btn-secondary btn-sm" onclick="WindowMgr.save();UI.notify('Ventanas guardadas','success')" title="Guardar">💾</button>` : ''}
           </div>
-          <div class="chart-body"><div class="chart-container" style="height:160px"><canvas id="tachogramChart"></canvas></div></div>
+          ${isAdding ? `<div class="window-add-hint">Arrastra en el tacograma para seleccionar</div>` : ''}
+          <div id="windowChipsList">
+            ${wins.length
+              ? wins.map(w => {
+                  const isAct = w.id === activeId;
+                  const dur   = w.analysis?.durationMin?.toFixed(1) ?? '?';
+                  const beats = w.analysis?.beatCount ?? (w.endBeat - w.startBeat + 1);
+                  return `<div class="window-chip ${isAct ? 'active' : ''}"
+                      style="${isAct ? `border-color:${w.color};background:${w.color}18` : ''}"
+                      onclick="WindowMgr.setActive('${w.id}')">
+                    <span class="window-chip-dot" style="background:${w.color}"></span>
+                    <span class="window-chip-label" title="${w.label}">${w.label}</span>
+                    <span class="window-chip-meta">${beats}L·${dur}m</span>
+                    <button class="btn btn-danger btn-icon-only" style="width:18px;height:18px;font-size:9px;flex-shrink:0"
+                      onclick="event.stopPropagation();WindowMgr.delete('${w.id}')">✕</button>
+                  </div>`;
+                }).join('')
+              : `<div style="font-size:11px;color:var(--text-muted);text-align:center;padding:8px 0">
+                  Sin ventanas. ${isAdding ? 'Arrastra en el tacograma.' : ''}
+                 </div>`}
+          </div>
+        </div>
+      </div>`;
+  },
+  
+  renderWindowMetrics(win) {
+    const el = document.getElementById('mainMetricsContainer');
+    if (!el || !win?.analysis) return;
+    const { td, fd, nl, comp } = win.analysis;
+    const hdr = `<div class="win-metrics-header">
+      <span class="window-chip-dot" style="background:${win.color}"></span>
+      <span>${win.label}</span>
+      <span style="font-size:10px;color:var(--text-muted)">${win.analysis.beatCount}L · ${win.analysis.durationMin?.toFixed(1)}min</span>
+      <button class="btn btn-secondary btn-sm" style="margin-left:auto;font-size:10px"
+        onclick="UI.renderAnalysisMetrics(state.currentRecording)">← Completo</button>
+    </div>`;
+    el.innerHTML = hdr + this._buildMetricsPanel(td, fd, nl, comp);
+  },
+  
+  renderAnalysisCenter(rec, rr) {
+    const center = document.getElementById('analyzeCenter');
+    if (!center) return;
+    const td = rec.td || {};
+  
+    center.innerHTML = `
+      <!-- Interactive tachogram -->
+      <div style="margin-bottom:12px" class="chart-card">
+        <div class="chart-card-header" style="justify-content:space-between">
+          <span class="chart-card-title">Tacograma RR</span>
+          <span class="chart-card-sub">${rr?.length ?? 0} latidos · ${td.totalDuration ? (td.totalDuration/60).toFixed(1) : '?'} min</span>
+        </div>
+        <div class="chart-body" style="padding:8px">
+          <div style="position:relative;height:160px;width:100%">
+            <canvas id="tachogramInteractive" style="width:100%;height:160px"></canvas>
+          </div>
         </div>
       </div>
+  
+      <!-- Standard charts grid -->
       <div class="charts-grid">
-        <div class="chart-card">
-          <div class="chart-card-header"><span class="chart-card-title">Histograma RR</span></div>
-          <div class="chart-body"><div class="chart-container" style="height:150px"><canvas id="histChart"></canvas></div></div>
-        </div>
-        <div class="chart-card">
-          <div class="chart-card-header"><span class="chart-card-title">Histograma ΔRR</span></div>
-          <div class="chart-body"><div class="chart-container" style="height:150px"><canvas id="diffHistChart"></canvas></div></div>
-        </div>
+        <div class="chart-card"><div class="chart-card-header"><span class="chart-card-title">Histograma RR</span></div>
+          <div class="chart-body"><div class="chart-container" style="height:140px"><canvas id="histChart"></canvas></div></div></div>
+        <div class="chart-card"><div class="chart-card-header"><span class="chart-card-title">Histograma ΔRR</span></div>
+          <div class="chart-body"><div class="chart-container" style="height:140px"><canvas id="diffHistChart"></canvas></div></div></div>
       </div>
-      <div class="chart-row">
-        <div class="chart-card">
-          <div class="chart-card-header">
-            <span class="chart-card-title">Densidad Espectral (PSD)</span>
-            <div style="display:flex;gap:10px;font-size:10px">
+      <div class="chart-row" style="margin-bottom:12px">
+        <div class="chart-card"><div class="chart-card-header">
+            <span class="chart-card-title">PSD — Lomb-Scargle</span>
+            <div style="display:flex;gap:8px;font-size:10px">
               <span style="color:rgba(100,136,255,0.9)">■ VLF</span>
               <span style="color:rgba(255,160,32,0.9)">■ LF</span>
               <span style="color:var(--accent)">■ HF</span>
             </div>
           </div>
-          <div class="chart-body"><div class="chart-container" style="height:180px"><canvas id="psdChart"></canvas></div></div>
-        </div>
-        <div class="chart-card">
-          <div class="chart-card-header"><span class="chart-card-title">Diagrama de Poincaré</span></div>
+          <div class="chart-body"><div class="chart-container" style="height:170px"><canvas id="psdChart"></canvas></div></div></div>
+        <div class="chart-card"><div class="chart-card-header"><span class="chart-card-title">Diagrama de Poincaré</span></div>
           <div class="chart-body" style="display:flex;align-items:center;justify-content:center">
-            <canvas id="poincareCanvas" style="width:100%;height:220px"></canvas>
-          </div>
+            <canvas id="poincareCanvas" style="width:100%;height:200px"></canvas>
+          </div></div>
+      </div>
+  
+      <!-- Non-stationary / Dynamic analysis -->
+      <div class="chart-card" style="margin-bottom:16px">
+        <div class="chart-card-header"><span class="chart-card-title">Análisis de No Estacionariedad</span></div>
+        <div class="dynamic-tabs" id="dynamicTabBar">
+          ${[['sliding','📈 Deslizante'],['segments','📊 Segmentos'],['prsa','🫀 PRSA']].map(([k,l]) =>
+            `<button class="dtab-btn ${state.dynamicTab===k?'active':''}"
+              onclick="UI.switchDynamicTab('${k}')">${l}</button>`).join('')}
         </div>
+        <div id="dynamicTabContent" style="min-height:220px"></div>
       </div>
     `;
-
-    // Render all charts
+  
+    // Render all charts after DOM is ready
     requestAnimationFrame(() => {
-      if (rec.rrMs) {
-        Charts.renderTachogram(rec.cleanRR || rec.rrMs);
-        Charts.renderHistogram(rec.cleanRR || rec.rrMs);
-        Charts.renderDiffHist(rec.cleanRR || rec.rrMs);
-        if (fd) Charts.renderPSD(fd);
-        Charts.renderPoincare(rec.cleanRR || rec.rrMs, td);
+      if (rr) {
+        Charts.renderInteractiveTachogram(rr, WindowMgr.getAll(), null);
+        Charts.renderHistogram(rr);
+        Charts.renderDiffHist(rr);
+        if (rec.fd) Charts.renderPSD(rec.fd);
+        Charts.renderPoincare(rr, rec.td);
+        // Bind tachogram mouse events
+        App._bindTachogramEvents(rr);
       }
+      UI.switchDynamicTab(state.dynamicTab, true);
     });
+  },
+  
+  switchDynamicTab(tab, forceRender = false) {
+    state.dynamicTab = tab;
+    document.querySelectorAll('.dtab-btn').forEach(b =>
+      b.classList.toggle('active', b.textContent.includes(
+        tab === 'sliding' ? '📈' : tab === 'segments' ? '📊' : '🫀'
+      ))
+    );
+    if (forceRender || true) this._renderDynamicTab(tab);
+  },
+  
+  _renderDynamicTab(tab) {
+    const el = document.getElementById('dynamicTabContent');
+    if (!el) return;
+    const rec = state.currentRecording;
+    if (!rec) { el.innerHTML = '<div style="padding:16px;color:var(--text-muted)">Sin grabación</div>'; return; }
+    const rr = rec.cleanRR || rec.rrMs;
+    if (!rr?.length) return;
+  
+    if (tab === 'sliding') {
+      const data = NonStationary.sliding(rr);
+      if (!data.length) { el.innerHTML = '<div style="padding:14px;font-size:12px;color:var(--text-muted)">Grabación demasiado corta para análisis deslizante</div>'; return; }
+      el.innerHTML = `
+        <div style="padding:10px 14px">
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">
+            Ventana: ${state.settings.slidingWinBeats} latidos · Paso: ${state.settings.slidingStepBeats} latidos
+          </div>
+          <div class="sliding-grid">
+            <div><div style="font-size:11px;color:var(--text-dim);margin-bottom:4px">SDNN (ms)</div>
+                 <div class="chart-container" style="height:100px"><canvas id="slidSDNN"></canvas></div></div>
+            <div><div style="font-size:11px;color:var(--text-dim);margin-bottom:4px">RMSSD (ms)</div>
+                 <div class="chart-container" style="height:100px"><canvas id="slidRMSSD"></canvas></div></div>
+            <div><div style="font-size:11px;color:var(--text-dim);margin-bottom:4px">FC media (bpm)</div>
+                 <div class="chart-container" style="height:100px"><canvas id="slidHR"></canvas></div></div>
+            <div><div style="font-size:11px;color:var(--text-dim);margin-bottom:4px">pNN50 (%)</div>
+                 <div class="chart-container" style="height:100px"><canvas id="slidPNN50"></canvas></div></div>
+          </div>
+        </div>`;
+      requestAnimationFrame(() => {
+        Charts.renderSlidingLine('slidSDNN',  data, 'sdnn',   'ms',  Charts.accent());
+        Charts.renderSlidingLine('slidRMSSD', data, 'rmssd',  'ms',  Charts.accent());
+        Charts.renderSlidingLine('slidHR',    data, 'meanHR', 'bpm', Charts.secondary());
+        Charts.renderSlidingLine('slidPNN50', data, 'pnn50',  '%',   '#6488FF');
+      });
+  
+    } else if (tab === 'segments') {
+      const segs = NonStationary.autoSegment(rr, 3);
+      const fmt  = MathUtils.fmt;
+      el.innerHTML = `
+        <div style="padding:10px 14px">
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">División automática en 3 segmentos iguales (ideal para protocolos reposo-ejercicio-reposo)</div>
+          <div style="overflow-x:auto">
+            <table class="segment-table">
+              <tr><th>Segmento</th><th>Latidos</th><th>Duración</th>
+                  <th>SDNN</th><th>RMSSD</th><th>FC media</th>
+                  <th>LF (ms²)</th><th>HF (ms²)</th><th>LF/HF</th>
+                  <th>SD1</th><th>SD2</th></tr>
+              ${segs.map(s => `<tr>
+                <td class="label">${s.label}</td>
+                <td>${s.end - s.start}</td>
+                <td>${fmt(s.durationMin, 1)} min</td>
+                <td>${fmt(s.td?.sdnn, 1)}</td><td>${fmt(s.td?.rmssd, 1)}</td>
+                <td>${fmt(s.td?.meanHR, 1)}</td>
+                <td>${s.fd?.lf ?? '—'}</td><td>${s.fd?.hf ?? '—'}</td>
+                <td>${fmt(s.fd?.lfhf, 2)}</td>
+                <td>${fmt(s.nl?.sd1, 1)}</td><td>${fmt(s.nl?.sd2, 1)}</td>
+              </tr>`).join('')}
+            </table>
+          </div>
+        </div>`;
+  
+    } else if (tab === 'prsa') {
+      const prsa = NonStationary.prsa(rr);
+      const fmt  = MathUtils.fmt;
+      el.innerHTML = prsa ? `
+        <div style="padding:10px 14px">
+          <div style="display:flex;gap:10px;margin-bottom:12px">
+            <div class="prsa-metric">
+              <div class="pm-val" style="color:var(--secondary)">${fmt(prsa.DC, 2)} ms</div>
+              <div class="pm-label">DC — Capacidad de desaceleración</div>
+              <div style="font-size:10px;color:var(--text-muted);margin-top:3px">Marcador vagal/parasimpático</div>
+            </div>
+            <div class="prsa-metric">
+              <div class="pm-val">${fmt(prsa.AC, 2)} ms</div>
+              <div class="pm-label">AC — Capacidad de aceleración</div>
+              <div style="font-size:10px;color:var(--text-muted);margin-top:3px">Marcador simpático</div>
+            </div>
+          </div>
+          <div class="prsa-grid">
+            <div><div class="chart-container" style="height:120px"><canvas id="prsaDecChart"></canvas></div></div>
+            <div><div class="chart-container" style="height:120px"><canvas id="prsaAccChart"></canvas></div></div>
+          </div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:8px">
+            PRSA (Bauer et al. 2006). L = ${prsa.L} latidos. DC normal (&gt;2.5 ms) indica actividad vagal preservada.
+          </div>
+        </div>`
+        : `<div style="padding:14px;font-size:12px;color:var(--text-muted)">Se necesitan al menos ${4*30} latidos para PRSA</div>`;
+      if (prsa) requestAnimationFrame(() => Charts.renderPRSACurves(prsa));
+    }
   },
 
   _buildMetricsPanel(td, fd, nl, comp) {
@@ -1796,9 +2405,11 @@ const App = {
     const rec = state.recordings.find(r => r.id === id);
     if (!rec) return;
     state.currentRecording = rec;
+    state.activeWindowId   = rec.windows?.[0]?.id || null;
+    state.windowMode       = false;
+    state.windowDraft      = null;
     this.switchView('analyze');
     UI.renderAnalysis(rec);
-    // Re-render library to update selection
     UI.renderLibrary();
   },
 
@@ -1946,7 +2557,60 @@ const App = {
         }
       }, 200);
     });
-  }
+    
+    // Tachogram interactive mouse events (delegated)
+    document.getElementById('content').addEventListener('mousedown', e => {
+      if (e.target.id !== 'tachogramInteractive') return;
+      App._tachoMouseDown(e);
+    });
+    document.addEventListener('mousemove', e => App._tachoMouseMove(e));
+    document.addEventListener('mouseup',   e => App._tachoMouseUp(e));
+  },
+  
+  _bindTachogramEvents(rrMs) {
+    // Ensures the stored rrMs reference is current (called after render)
+    const canvas = document.getElementById('tachogramInteractive');
+    if (canvas) canvas._rrMs = rrMs;
+  },
+
+  _tachoMouseDown(e) {
+    if (!state.windowMode) return;
+    const canvas = e.target;
+    if (!canvas._p) return;
+    const rect  = canvas.getBoundingClientRect();
+    const beat  = canvas._p.toBeat(e.clientX - rect.left);
+    state.windowDraft = { startBeat: beat, endBeat: beat };
+    e.preventDefault();
+  },
+
+  _tachoMouseMove(e) {
+    if (!state.windowDraft) return;
+    const canvas = document.getElementById('tachogramInteractive');
+    if (!canvas?._p) return;
+    const rect = canvas.getBoundingClientRect();
+    const beat = canvas._p.toBeat(e.clientX - rect.left);
+    state.windowDraft.endBeat = beat;
+    // Live redraw with draft
+    const rr = state.currentRecording?.cleanRR || state.currentRecording?.rrMs;
+    if (rr) Charts.renderInteractiveTachogram(rr, WindowMgr.getAll(), state.windowDraft);
+  },
+
+  _tachoMouseUp(e) {
+    if (!state.windowDraft || !state.windowMode) return;
+    const { startBeat, endBeat } = state.windowDraft;
+    state.windowDraft = null;
+    const win = WindowMgr.create(startBeat, endBeat);
+    if (win) {
+      state.windowMode = false;
+      document.getElementById('tachogramInteractive')?.classList.remove('mode-add');
+      UI.renderWindowsPanel();
+      UI.renderWindowMetrics(win);
+      const rr = state.currentRecording.cleanRR || state.currentRecording.rrMs;
+      Charts.renderInteractiveTachogram(rr, WindowMgr.getAll(), null);
+      // Optionally auto-save
+      WindowMgr.save();
+    }
+  },
 };
 
 // ===== BOOT =====

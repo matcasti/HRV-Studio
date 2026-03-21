@@ -111,7 +111,8 @@
         </div>
         <div class="analyze-layout" id="analyzeLayout">
           <div class="analyze-left" id="analyzeLeft">
-            <div id="metricsContainer">
+            <div id="windowsPanelContainer"></div>
+            <div id="mainMetricsContainer">
               <div class="empty-state" style="padding:30px 20px">
                 <div class="empty-state-icon">📊</div>
                 <div class="empty-state-title">Sin métricas</div>
@@ -126,6 +127,7 @@
               <div class="empty-state-sub">Importa o selecciona una grabación para comenzar el análisis</div>
               <button class="btn btn-primary" onclick="UI.openImport()">+ Importar grabación</button>
             </div>
+            <!-- Dynamic content rendered by UI.renderAnalysisCenter() -->
           </div>
         </div>
       </div>
