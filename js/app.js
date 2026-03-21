@@ -33,6 +33,54 @@ const state = {
   dynamicTab: 'sliding' // active tab in non-stationary panel
 };
 
+// ===== METRIC INFO DEFINITIONS =====
+const METRIC_INFO = {
+  // Time domain
+  meanRR:     { n:'Media RR', d:'Promedio de todos los intervalos entre latidos consecutivos. Inversamente proporcional a la FC media.', c:'Σ RR / N', r:'600–1000 ms (FC 60–100 bpm)', a:'< 600 ms: taquicardia; > 1000 ms: bradicardia' },
+  sdnn:       { n:'SDNN', d:'Desviación estándar de todos los intervalos NN. Refleja la variabilidad global de la FC e integra todas las fuentes autonómicas cíclicas.', c:'σ de la serie RR completa', r:'50–100 ms (grabación 5 min)', a:'< 50 ms: VFC muy reducida, riesgo CV aumentado; > 150 ms: atletas / alta actividad vagal' },
+  rmssd:      { n:'RMSSD', d:'Raíz cuadrática media de diferencias sucesivas de NN. Principal índice de modulación parasimpática a corto plazo. Robusto a tendencias lentas.', c:'√(media de (RRᵢ₊₁ − RRᵢ)²)', r:'20–50 ms', a:'< 20 ms: baja actividad vagal; correlaciona con mayor morbimortalidad cardiovascular' },
+  pnn50:      { n:'pNN50', d:'Porcentaje de pares de intervalos NN consecutivos con diferencia > 50 ms. Marcador de actividad vagal, especialmente en grabaciones cortas.', c:'(NN50 / N total) × 100', r:'> 5–15% adultos en reposo', a:'< 5%: reducción significativa de actividad parasimpática' },
+  nn50:       { n:'NN50', d:'Número absoluto de pares de intervalos NN consecutivos que difieren más de 50 ms.', c:'Conteo de |RRᵢ₊₁ − RRᵢ| > 50 ms', r:'Depende de duración del registro', a:'Bajo: reducción de variabilidad a corto plazo; debe interpretarse junto a pNN50' },
+  pnn20:      { n:'pNN20', d:'Porcentaje de intervalos NN con diferencia > 20 ms. Más sensible que pNN50 en grabaciones cortas (< 2 min).', c:'(NN20 / N total) × 100', r:'> 30% aprox.', a:'Bajo: reducción de actividad parasimpática; útil en registros cortos' },
+  cv:         { n:'CV (Coeficiente de Variación)', d:'Variabilidad relativa independiente de la FC media. Permite comparación entre sujetos con distinta FC basal.', c:'(SDNN / Media RR) × 100', r:'3–10%', a:'< 3%: rigidez autonómica; > 12%: alta variabilidad, posibles ectopias' },
+  triIndex:   { n:'Índice Triangular HRV', d:'Razón entre el total de intervalos NN y el modo del histograma. Refleja la distribución geométrica de la VFC; robusto a ectopias ocasionales.', c:'N total / pico del histograma RR (bin 8 ms)', r:'> 15 (grabaciones largas)', a:'< 15: VFC reducida; < 8: VFC muy deteriorada (p.ej. IC avanzada)' },
+  sdann:      { n:'SDANN', d:'Desviación estándar de las medias de intervalos NN en segmentos de 5 min. Refleja variabilidad circadiana y ultradiana. Solo fiable en grabaciones ≥ 2 segmentos de 5 min.', c:'σ de las medias de cada segmento de 5 min', r:'> 40 ms (registros 24 h)', a:'Reducido en IC, neuropatía autonómica, diabetes con compromiso vagal' },
+  sdnni:      { n:'SDNNi', d:'Media de las desviaciones estándar por segmentos de 5 min. Refleja variabilidad intrasegmento (componentes de alta frecuencia). Complementa SDANN.', c:'Media de σ dentro de cada segmento de 5 min', r:'> 25 ms', a:'Reducida: pérdida de variabilidad a corto plazo sostenida en el tiempo' },
+  // Frequency domain
+  vlf:        { n:'VLF (Very Low Frequency)', d:'Potencia espectral 0.003–0.04 Hz. Relacionada con termorregulación, vasomotricidad y eje renina-angiotensina. Poco fiable en grabaciones < 5 min.', c:'∫ PSD en 0.003–0.04 Hz (Lomb-Scargle)', r:'< 1500 ms² (5 min)', a:'Reducida: IC, sepsis; muy aumentada: apnea del sueño, fallo autonómico' },
+  lf:         { n:'LF (Low Frequency)', d:'Potencia espectral 0.04–0.15 Hz. Refleja tanto actividad simpática como parasimpática; marcado componente del reflejo barorreceptor.', c:'∫ PSD en 0.04–0.15 Hz', r:'500–1500 ms² aprox. (5 min, reposo)', a:'Aumentada: estrés, hipertensión; reducida: neuropatía autonómica, IC' },
+  hf:         { n:'HF (High Frequency)', d:'Potencia espectral 0.15–0.4 Hz. Reflejo directo de la modulación vagal respiratoria (arritmia sinusal respiratoria). Marcador parasimpático.', c:'∫ PSD en 0.15–0.4 Hz', r:'200–800 ms² aprox. (5 min, reposo)', a:'Reducida: baja actividad vagal, ansiedad, estrés, DM, IC; aumentada: atletas' },
+  lfNorm:     { n:'LF normalizada', d:'Potencia LF como fracción de (LF+HF). Minimiza el efecto de la potencia total y permite comparaciones entre sujetos con distinta VFC basal.', c:'LF / (LF+HF) × 100 n.u.', r:'54 ± 4 n.u. (reposo, adultos)', a:'> 60 n.u.: predominio simpático o actividad barorreceptora aumentada' },
+  hfNorm:     { n:'HF normalizada', d:'Potencia HF como fracción de (LF+HF). Índice relativo de modulación vagal. Complementa HF norm en el análisis del balance autonómico.', c:'HF / (LF+HF) × 100 n.u.', r:'29 ± 3 n.u. (reposo)', a:'< 20 n.u.: reducción importante de modulación vagal relativa' },
+  lfhf:       { n:'Ratio LF/HF', d:'Cociente entre potencias LF y HF. Usado clásicamente como proxy del balance simpato-vagal, aunque su interpretación aislada es controversia en la literatura.', c:'LF / HF', r:'1.5–2.0 (reposo, adultos)', a:'> 2.5: predominio simpático o estrés; < 0.8: predominio vagal (ejercicio intenso, relajación)' },
+  lfPeakF:    { n:'Frecuencia pico LF', d:'Frecuencia de mayor potencia dentro de la banda LF. Corresponde aproximadamente a la oscilación del barorreflepto (onda de Mayer).', c:'argmax PSD en 0.04–0.15 Hz', r:'~0.1 Hz', a:'Desplazado o ausente: alteración barorreceptora; varía con respiración y postura' },
+  hfPeakF:    { n:'Frecuencia pico HF', d:'Frecuencia de mayor potencia en la banda HF. Corresponde directamente a la frecuencia respiratoria. Útil para verificar correcta atribución del componente vagal.', c:'argmax PSD en 0.15–0.4 Hz', r:'~0.25 Hz (15 rpm)', a:'< 0.15 Hz o > 0.4 Hz: respiración lenta/rápida fuera de banda; revisar protocolo' },
+  // Non-linear
+  sd1:        { n:'SD1 (Poincaré)', d:'Desviación estándar perpendicular al eje de identidad. Refleja variabilidad a corto plazo (latido a latido), principalmente de origen vagal. Matemáticamente equivalente a RMSSD/√2.', c:'√(½·var(RRᵢ₊₁ − RRᵢ))', r:'15–40 ms (reposo)', a:'Reducida: baja modulación parasimpática; correlaciona directamente con RMSSD' },
+  sd2:        { n:'SD2 (Poincaré)', d:'Desviación estándar a lo largo del eje de identidad. Refleja variabilidad a largo plazo (tendencias lentas). Engloba tanto simpático como parasimpático.', c:'√(2·SDNN² − SD1²/2)', r:'50–130 ms (reposo)', a:'Reducida junto con SD1: deterioro global de la VFC; predomina en IC y neuropatía' },
+  sd1sd2:     { n:'SD1/SD2', d:'Razón entre variabilidad corto y largo plazo. Índice de balance autonómico temporal. Valores más altos indican proporcionalmente mayor componente vagal a corto plazo.', c:'SD1 / SD2', r:'0.25–0.50', a:'< 0.20: predominio de variabilidad lenta sobre rápida; frecuente en estrés crónico y fatiga' },
+  sampen:     { n:'SampEn (Entropía Muestral)', d:'Cuantifica la irregularidad y complejidad de la señal RR. Sin auto-comparación (más robusto que ApEn). Mayor valor = mayor complejidad y adaptabilidad del sistema.', c:'−ln(A/B); A=matches m+1, B=matches m, tolerancia r=factor×SDNN', r:'1.0–2.0 (adultos sanos)', a:'< 0.8: pérdida de complejidad; asociado a IC, DM, estrés severo, envejecimiento patológico' },
+  apen:       { n:'ApEn (Entropía Aproximada)', d:'Medida de irregularidad de la señal RR. Precursor de SampEn, sesgado en series cortas por incluir auto-comparación. Útil como referencia histórica.', c:'φ(m) − φ(m+1); φ=media de log-probabilidades de coincidencia', r:'0.7–1.5', a:'< 0.5: regularidad excesiva; asociado a enfermedades sistémicas graves' },
+  alpha1:     { n:'DFA α1 (escala corta)', d:'Exponente de fluctuación sin tendencia, escala 4–16 latidos. Cuantifica correlaciones de ley de potencia a corto plazo en la serie RR.', c:'Pendiente log-log de F(n) vs n, n=4–16 (DFA de Peng et al.)', r:'0.75–1.25 (adultos sanos, reposo)', a:'< 0.75: anticorrelación (patológico, IC severa); > 1.25: correlaciones excesivas (fibrilación); ~1.0: óptimo fractal' },
+  alpha2:     { n:'DFA α2 (escala larga)', d:'Exponente de fluctuación sin tendencia, escala 16–64 latidos. Refleja correlaciones a largo plazo; menos estudiado clínicamente que α1.', c:'Pendiente log-log de F(n) vs n, n=16–64', r:'0.85–1.35', a:'Valores extremos: pérdida de complejidad fractal a largo plazo; sensible a cambios circadianos' },
+  corrDim:    { n:'Dimensión de Correlación (D2)', d:'Estimación de la dimensionalidad del atractor del sistema cardiovascular. A mayor D2, mayor complejidad dinámica. Requiere series largas para ser fiable.', c:'Pendiente log-log de C(r) vs r (Grassberger-Procaccia)', r:'Variable; mayor = más complejo', a:'Reducida en enfermedades crónicas y envejecimiento; debe interpretarse con cautela en series cortas' },
+  // Composite
+  cvi:        { n:'CVI (Cardiac Vagal Index)', d:'Índice logarítmico de actividad vagal cardíaca basado en el área del diagrama de Poincaré. Combina SD1 y SD2 en una única métrica de actividad vagal.', c:'log₁₀(4π · SD1 · SD2)', r:'3.5–5.0', a:'< 3.5: reducción de actividad vagal cardíaca; útil en monitorización longitudinal' },
+  csi:        { n:'CSI (Cardiac Sympathetic Index)', d:'Índice de actividad simpática basado en la forma alargada del diagrama de Poincaré. Aumenta cuando hay predominio simpático relativo.', c:'SD2 / SD1', r:'2.0–5.0', a:'> 5: predominio simpático marcado; usado en evaluación de neuropatía autonómica diabética' },
+  gsi:        { n:'GSI (Índice Simpato-vagal Geométrico)', d:'Media geométrica de SD1 y SD2. Proxy del balance global simpato-vagal que penaliza desequilibrios extremos entre ambos índices.', c:'√(SD1 × SD2)', r:'30–80 ms', a:'Reducido: deterioro global de VFC; útil para comparación entre sesiones' },
+  stressIndex: { n:'Índice de Estrés (Baevsky)', d:'Índice de tensión regulatoria del SNA. Cuantifica la carga sobre los mecanismos de regulación cardíaca. Aumenta con estrés físico y psicológico.', c:'Moda / (2 · Rango RR · Moda RR)', r:'< 150 u.a. (reposo)', a:'150–500: estrés autonómico moderado; > 500: sobrecarga regulatoria severa' },
+  vagusPower: { n:'Potencia Vagal (%)', d:'Fracción de la potencia espectral total representada por la banda HF. Indica qué porcentaje de la VFC es de origen parasimpático.', c:'(HF / Potencia Total) × 100', r:'30–50% (reposo)', a:'< 20%: reducción significativa de tono vagal; > 60%: alta dominancia vagal' },
+  symPower:   { n:'Potencia Simpática (%)', d:'Fracción de la potencia espectral total representada por LF. Indicador relativo de influencia simpática/barorreceptora.', c:'(LF / Potencia Total) × 100', r:'20–45% (reposo)', a:'> 50%: predominio simpático o estrés marcado' },
+  dc:         { n:'DC (Deceleration Capacity)', d:'Capacidad de desaceleración cardíaca medida por Phase-Rectified Signal Averaging. Potente predictor de mortalidad post-infarto (Bauer et al. 2006). Refleja tono vagal.', c:'[PRSA(0)+PRSA(1)−PRSA(−1)−PRSA(−2)] / 4 sobre anclas de desaceleración', r:'> 4.5 ms', a:'< 2.5 ms: riesgo de muerte cardíaca súbita ×5.6; 2.5–4.5 ms: riesgo intermedio' },
+  ac:         { n:'AC (Acceleration Capacity)', d:'Capacidad de aceleración cardíaca por PRSA. Refleja reserva simpática y reducción del tono vagal. Complementa DC en la evaluación del balance autonómico.', c:'[PRSA(0)+PRSA(1)−PRSA(−1)−PRSA(−2)] / 4 sobre anclas de aceleración', r:'Negativo, |AC| > 2 ms', a:'Valor absoluto pequeño: reducción de reserva simpática o incapacidad de aceleración' },
+};
+
+/** Renders a small ⓘ icon that triggers the floating info tooltip */
+function _miInfo(key) {
+  if (!METRIC_INFO[key]) return '';
+  return `<span class="mi-info" data-metric="${key}">i</span>`;
+}
+
 // ===== INDEXEDDB MODULE =====
 const DB = (() => {
   const DB_NAME = 'HRVStudio', DB_VERSION = 1;
@@ -727,12 +775,16 @@ const Charts = {
     ctx.fillText('RR(n+1)', 0, 0); ctx.restore();
   },
 
-  renderPSD(fd) {
+  renderPSD(fd, rrMs) {
     this.destroyChart('psdChart');
     const ctx = this.getCtx('psdChart');
-    if (!ctx || !fd) return;
-    const { psdFreqs: freqs, psdPow: power, vlfMin = 0.003, vlfMax = 0.04,
-      lfMin = 0.04, lfMax = 0.15, hfMin = 0.15, hfMax = 0.4 } = { ...fd, ...state.settings };
+    if (!ctx) return;
+    // Always compute fresh (avoids stale/missing stored arrays; fixes full-recording spectral issue)
+    const src = rrMs || state.currentRecording?.cleanRR || state.currentRecording?.rrMs;
+    if (!src || src.length < 30) return;
+    const ls = LombScargle.compute(src, state.settings);
+    if (!ls) return;
+    const { freqs, psd: power } = ls;
     const bgColors = freqs.map(f => {
       if (f >= state.settings.vlfMin && f < state.settings.vlfMax) return 'rgba(100,136,255,0.3)';
       if (f >= state.settings.lfMin && f < state.settings.lfMax) return 'rgba(255,160,32,0.35)';
@@ -1950,7 +2002,7 @@ const UI = {
         Charts.renderInteractiveTachogram(rr, WindowMgr.getAll(), null);
         Charts.renderHistogram(rr);
         Charts.renderDiffHist(rr);
-        if (rec.fd) Charts.renderPSD(rec.fd);
+        Charts.renderPSD(rec.fd, rr);
         Charts.renderPoincare(rr, rec.td);
         // Bind tachogram mouse events
         App._bindTachogramEvents(rr);
@@ -2037,12 +2089,12 @@ const UI = {
           <div style="display:flex;gap:10px;margin-bottom:12px">
             <div class="prsa-metric">
               <div class="pm-val" style="color:var(--secondary)">${fmt(prsa.DC, 2)} ms</div>
-              <div class="pm-label">DC — Capacidad de desaceleración</div>
+              <div class="pm-label">DC — Capacidad de desaceleración ${_miInfo('dc')}</div>
               <div style="font-size:10px;color:var(--text-muted);margin-top:3px">Marcador vagal/parasimpático</div>
             </div>
             <div class="prsa-metric">
               <div class="pm-val">${fmt(prsa.AC, 2)} ms</div>
-              <div class="pm-label">AC — Capacidad de aceleración</div>
+              <div class="pm-label">AC — Capacidad de aceleración ${_miInfo('ac')}</div>
               <div style="font-size:10px;color:var(--text-muted);margin-top:3px">Marcador simpático</div>
             </div>
           </div>
@@ -2072,30 +2124,30 @@ const UI = {
         <div class="mp-body">
           <div class="metric-grid">
             <div class="metric-item accent-bg mi-full">
-              <div class="mi-label">Mean RR</div>
+              <div class="mi-label">Mean RR ${_miInfo('meanRR')}</div>
               <div class="mi-value">${m(td.mean, 1)}</div>
               <div class="mi-unit">ms · ${m(td.meanHR, 1)} bpm</div>
             </div>
-            <div class="metric-item"><div class="mi-label">SDNN</div><div class="mi-value">${m(td.sdnn, 1)}</div><div class="mi-unit">ms</div><div class="mi-ref">Norm: 50–100</div></div>
-            <div class="metric-item"><div class="mi-label">RMSSD</div><div class="mi-value">${m(td.rmssd, 1)}</div><div class="mi-unit">ms</div><div class="mi-ref">Norm: 20–50</div></div>
-            <div class="metric-item"><div class="mi-label">pNN50</div><div class="mi-value">${m(td.pnn50, 1)}</div><div class="mi-unit">%</div></div>
-            <div class="metric-item"><div class="mi-label">NN50</div><div class="mi-value">${td.nn50}</div><div class="mi-unit">latidos</div></div>
-            <div class="metric-item"><div class="mi-label">pNN20</div><div class="mi-value">${m(td.pnn20, 1)}</div><div class="mi-unit">%</div></div>
+            <div class="metric-item"><div class="mi-label">SDNN ${_miInfo('sdnn')}</div><div class="mi-value">${m(td.sdnn, 1)}</div><div class="mi-unit">ms</div><div class="mi-ref">Norm: 50–100</div></div>
+            <div class="metric-item"><div class="mi-label">RMSSD ${_miInfo('rmssd')}</div><div class="mi-value">${m(td.rmssd, 1)}</div><div class="mi-unit">ms</div><div class="mi-ref">Norm: 20–50</div></div>
+            <div class="metric-item"><div class="mi-label">pNN50 ${_miInfo('pnn50')}</div><div class="mi-value">${m(td.pnn50, 1)}</div><div class="mi-unit">%</div></div>
+            <div class="metric-item"><div class="mi-label">NN50 ${_miInfo('nn50')}</div><div class="mi-value">${td.nn50}</div><div class="mi-unit">latidos</div></div>
+            <div class="metric-item"><div class="mi-label">pNN20 ${_miInfo('pnn20')}</div><div class="mi-value">${m(td.pnn20, 1)}</div><div class="mi-unit">%</div></div>
             <div class="metric-item"><div class="mi-label">SD HR</div><div class="mi-value">${m(td.sdHR, 1)}</div><div class="mi-unit">bpm</div></div>
-            <div class="metric-item"><div class="mi-label">CV</div><div class="mi-value">${m(td.cv, 2)}</div><div class="mi-unit">%</div></div>
+            <div class="metric-item"><div class="mi-label">CV ${_miInfo('cv')}</div><div class="mi-value">${m(td.cv, 2)}</div><div class="mi-unit">%</div></div>
             <div class="metric-item"><div class="mi-label">Min HR</div><div class="mi-value">${m(td.minHR, 1)}</div><div class="mi-unit">bpm</div></div>
             <div class="metric-item"><div class="mi-label">Max HR</div><div class="mi-value">${m(td.maxHR, 1)}</div><div class="mi-unit">bpm</div></div>
             <div class="metric-item"><div class="mi-label">Min RR</div><div class="mi-value">${td.minRR}</div><div class="mi-unit">ms</div></div>
             <div class="metric-item"><div class="mi-label">Max RR</div><div class="mi-value">${td.maxRR}</div><div class="mi-unit">ms</div></div>
-            <div class="metric-item"><div class="mi-label">Tri. Index</div><div class="mi-value">${m(td.triIndex, 1)}</div><div class="mi-unit">u.a.</div></div>
+            <div class="metric-item"><div class="mi-label">Tri. Index ${_miInfo('triIndex')}</div><div class="mi-value">${m(td.triIndex, 1)}</div><div class="mi-unit">u.a.</div></div>
             <div class="metric-item"><div class="mi-label">N beats</div><div class="mi-value">${td.n}</div><div class="mi-unit">latidos</div></div>
-            ${td.sdann != null ? `<div class="metric-item"><div class="mi-label">SDANN</div><div class="mi-value">${m(td.sdann, 1)}</div><div class="mi-unit">ms</div></div>` : ''}
-            ${td.sdnni != null ? `<div class="metric-item"><div class="mi-label">SDNNi</div><div class="mi-value">${m(td.sdnni, 1)}</div><div class="mi-unit">ms</div></div>` : ''}
+            ${td.sdann != null ? `<div class="metric-item"><div class="mi-label">SDANN ${_miInfo('sdann')}</div><div class="mi-value">${m(td.sdann, 1)}</div><div class="mi-unit">ms</div></div>` : ''}
+            ${td.sdnni != null ? `<div class="metric-item"><div class="mi-label">SDNNi ${_miInfo('sdnni')}</div><div class="mi-value">${m(td.sdnni, 1)}</div><div class="mi-unit">ms</div></div>` : ''}
           </div>
         </div>
       </div>`;
     }
-
+    
     // Frequency domain
     if (fd) {
       html += `<div class="metric-panel">
@@ -2105,28 +2157,28 @@ const UI = {
         <div class="mp-body">
           <div class="metric-grid">
             <div class="metric-item mi-full" style="background:rgba(100,136,255,0.08);border-color:rgba(100,136,255,0.2)">
-              <div class="mi-label">VLF (0.003–0.04 Hz)</div>
+              <div class="mi-label">VLF (0.003–0.04 Hz) ${_miInfo('vlf')}</div>
               <div class="mi-value" style="color:var(--info)">${fd.vlf}</div><div class="mi-unit">ms²</div>
             </div>
             <div class="metric-item" style="background:rgba(255,160,32,0.08);border-color:rgba(255,160,32,0.2)">
-              <div class="mi-label">LF (0.04–0.15 Hz)</div>
+              <div class="mi-label">LF (0.04–0.15 Hz) ${_miInfo('lf')}</div>
               <div class="mi-value" style="color:var(--secondary)">${fd.lf}</div><div class="mi-unit">ms²</div>
             </div>
             <div class="metric-item accent-bg">
-              <div class="mi-label">HF (0.15–0.4 Hz)</div>
+              <div class="mi-label">HF (0.15–0.4 Hz) ${_miInfo('hf')}</div>
               <div class="mi-value">${fd.hf}</div><div class="mi-unit">ms²</div>
             </div>
             <div class="metric-item"><div class="mi-label">Total Power</div><div class="mi-value">${fd.total}</div><div class="mi-unit">ms²</div></div>
-            <div class="metric-item"><div class="mi-label">LF norm</div><div class="mi-value" style="color:var(--secondary)">${m(fd.lfNorm, 1)}</div><div class="mi-unit">n.u.</div></div>
-            <div class="metric-item"><div class="mi-label">HF norm</div><div class="mi-value">${m(fd.hfNorm, 1)}</div><div class="mi-unit">n.u.</div></div>
-            <div class="metric-item"><div class="mi-label">LF/HF</div><div class="mi-value" style="color:${fd.lfhf > 2 ? 'var(--warning)' : 'var(--accent)'}">${m(fd.lfhf, 3)}</div><div class="mi-unit">ratio</div></div>
-            <div class="metric-item"><div class="mi-label">LF peak</div><div class="mi-value" style="color:var(--secondary)">${fd.lfPeakF}</div><div class="mi-unit">Hz</div></div>
-            <div class="metric-item"><div class="mi-label">HF peak</div><div class="mi-value">${fd.hfPeakF}</div><div class="mi-unit">Hz</div></div>
+            <div class="metric-item"><div class="mi-label">LF norm ${_miInfo('lfNorm')}</div><div class="mi-value" style="color:var(--secondary)">${m(fd.lfNorm, 1)}</div><div class="mi-unit">n.u.</div></div>
+            <div class="metric-item"><div class="mi-label">HF norm ${_miInfo('hfNorm')}</div><div class="mi-value">${m(fd.hfNorm, 1)}</div><div class="mi-unit">n.u.</div></div>
+            <div class="metric-item"><div class="mi-label">LF/HF ${_miInfo('lfhf')}</div><div class="mi-value" style="color:${fd.lfhf > 2 ? 'var(--warning)' : 'var(--accent)'}">${m(fd.lfhf, 3)}</div><div class="mi-unit">ratio</div></div>
+            <div class="metric-item"><div class="mi-label">LF peak ${_miInfo('lfPeakF')}</div><div class="mi-value" style="color:var(--secondary)">${fd.lfPeakF}</div><div class="mi-unit">Hz</div></div>
+            <div class="metric-item"><div class="mi-label">HF peak ${_miInfo('hfPeakF')}</div><div class="mi-value">${fd.hfPeakF}</div><div class="mi-unit">Hz</div></div>
           </div>
         </div>
       </div>`;
     }
-
+    
     // Non-linear
     if (nl) {
       html += `<div class="metric-panel">
@@ -2136,19 +2188,19 @@ const UI = {
         <div class="mp-body">
           <div class="metric-grid">
             <div class="metric-item accent-bg">
-              <div class="mi-label">SD1 (Poincaré)</div>
+              <div class="mi-label">SD1 (Poincaré) ${_miInfo('sd1')}</div>
               <div class="mi-value">${m(nl.sd1, 1)}</div><div class="mi-unit">ms · vagal</div>
             </div>
             <div class="metric-item" style="background:rgba(255,160,32,0.08);border-color:rgba(255,160,32,0.2)">
-              <div class="mi-label">SD2 (Poincaré)</div>
-              <div class="mi-value" style="color:var(--secondary)">${m(nl.sd2, 1)}</div><div class="mi-unit">ms · simpático</div>
+              <div class="mi-label">SD2 (Poincaré) ${_miInfo('sd2')}</div>
+              <div class="mi-value" style="color:var(--secondary)">${m(nl.sd2, 1)}</div><div class="mi-unit">ms</div>
             </div>
-            <div class="metric-item"><div class="mi-label">SD1/SD2</div><div class="mi-value">${m(nl.sd1sd2, 3)}</div><div class="mi-unit">ratio</div></div>
-            <div class="metric-item"><div class="mi-label">SampEn</div><div class="mi-value">${m(nl.sampen, 3)}</div><div class="mi-unit">bits</div></div>
-            <div class="metric-item"><div class="mi-label">ApEn</div><div class="mi-value">${m(nl.apen, 3)}</div><div class="mi-unit">bits</div></div>
-            ${nl.alpha1 != null ? `<div class="metric-item"><div class="mi-label">DFA α1</div><div class="mi-value">${m(nl.alpha1, 3)}</div><div class="mi-unit">corto plazo</div><div class="mi-ref">Norm: 0.75–1.5</div></div>` : ''}
-            ${nl.alpha2 != null ? `<div class="metric-item"><div class="mi-label">DFA α2</div><div class="mi-value">${m(nl.alpha2, 3)}</div><div class="mi-unit">largo plazo</div></div>` : ''}
-            ${nl.corrDim != null ? `<div class="metric-item"><div class="mi-label">Dim. Correlación</div><div class="mi-value">${m(nl.corrDim, 2)}</div><div class="mi-unit">D2</div></div>` : ''}
+            <div class="metric-item"><div class="mi-label">SD1/SD2 ${_miInfo('sd1sd2')}</div><div class="mi-value">${m(nl.sd1sd2, 3)}</div><div class="mi-unit">ratio</div></div>
+            <div class="metric-item"><div class="mi-label">SampEn ${_miInfo('sampen')}</div><div class="mi-value">${m(nl.sampen, 3)}</div><div class="mi-unit">bits</div></div>
+            <div class="metric-item"><div class="mi-label">ApEn ${_miInfo('apen')}</div><div class="mi-value">${m(nl.apen, 3)}</div><div class="mi-unit">bits</div></div>
+            ${nl.alpha1 != null ? `<div class="metric-item"><div class="mi-label">DFA α1 ${_miInfo('alpha1')}</div><div class="mi-value">${m(nl.alpha1, 3)}</div><div class="mi-unit">corto plazo</div><div class="mi-ref">Norm: 0.75–1.25</div></div>` : ''}
+            ${nl.alpha2 != null ? `<div class="metric-item"><div class="mi-label">DFA α2 ${_miInfo('alpha2')}</div><div class="mi-value">${m(nl.alpha2, 3)}</div><div class="mi-unit">largo plazo</div></div>` : ''}
+            ${nl.corrDim != null ? `<div class="metric-item"><div class="mi-label">Dim. Correlación ${_miInfo('corrDim')}</div><div class="mi-value">${m(nl.corrDim, 2)}</div><div class="mi-unit">D2</div></div>` : ''}
           </div>
         </div>
       </div>`;
@@ -2162,14 +2214,14 @@ const UI = {
         </div>
         <div class="mp-body">
           <div class="metric-grid">
-            ${comp.cvi != null ? `<div class="metric-item accent-bg"><div class="mi-label">CVI (índice vagal)</div><div class="mi-value">${m(comp.cvi, 3)}</div></div>` : ''}
-            ${comp.csi != null ? `<div class="metric-item"><div class="mi-label">CSI (índice simpático)</div><div class="mi-value" style="color:var(--secondary)">${m(comp.csi, 2)}</div></div>` : ''}
-            ${comp.gsi != null ? `<div class="metric-item"><div class="mi-label">GSI</div><div class="mi-value">${m(comp.gsi, 1)}</div><div class="mi-unit">ms</div></div>` : ''}
-            ${comp.stressIndex != null ? `<div class="metric-item"><div class="mi-label">Índice de estrés</div><div class="mi-value" style="color:var(--warning)">${m(comp.stressIndex, 2)}</div><div class="mi-ref">Baevsky</div></div>` : ''}
-            ${comp.vagusPower != null ? `<div class="metric-item"><div class="mi-label">Potencia vagal</div><div class="mi-value">${m(comp.vagusPower, 1)}</div><div class="mi-unit">% total</div></div>` : ''}
-            ${comp.symPower != null ? `<div class="metric-item"><div class="mi-label">Potencia simpática</div><div class="mi-value" style="color:var(--secondary)">${m(comp.symPower, 1)}</div><div class="mi-unit">% total</div></div>` : ''}
-            ${comp.dc != null ? `<div class="metric-item"><div class="mi-label">DC (deceleración)</div><div class="mi-value">${m(comp.dc, 1)}</div><div class="mi-unit">ms</div></div>` : ''}
-            ${comp.ac != null ? `<div class="metric-item"><div class="mi-label">AC (aceleración)</div><div class="mi-value">${m(comp.ac, 1)}</div><div class="mi-unit">ms</div></div>` : ''}
+            ${comp.cvi != null ? `<div class="metric-item accent-bg"><div class="mi-label">CVI ${_miInfo('cvi')}</div><div class="mi-value">${m(comp.cvi, 3)}</div><div class="mi-unit">índice vagal</div></div>` : ''}
+            ${comp.csi != null ? `<div class="metric-item"><div class="mi-label">CSI ${_miInfo('csi')}</div><div class="mi-value" style="color:var(--secondary)">${m(comp.csi, 2)}</div><div class="mi-unit">índice simpático</div></div>` : ''}
+            ${comp.gsi != null ? `<div class="metric-item"><div class="mi-label">GSI ${_miInfo('gsi')}</div><div class="mi-value">${m(comp.gsi, 1)}</div><div class="mi-unit">ms</div></div>` : ''}
+            ${comp.stressIndex != null ? `<div class="metric-item"><div class="mi-label">Índice de Estrés ${_miInfo('stressIndex')}</div><div class="mi-value" style="color:var(--warning)">${m(comp.stressIndex, 2)}</div><div class="mi-unit">Baevsky</div></div>` : ''}
+            ${comp.vagusPower != null ? `<div class="metric-item"><div class="mi-label">Potencia Vagal ${_miInfo('vagusPower')}</div><div class="mi-value">${m(comp.vagusPower, 1)}</div><div class="mi-unit">% total</div></div>` : ''}
+            ${comp.symPower != null ? `<div class="metric-item"><div class="mi-label">Potencia Simpática ${_miInfo('symPower')}</div><div class="mi-value" style="color:var(--secondary)">${m(comp.symPower, 1)}</div><div class="mi-unit">% total</div></div>` : ''}
+            ${comp.dc != null ? `<div class="metric-item"><div class="mi-label">DC (desaceleración) ${_miInfo('dc')}</div><div class="mi-value">${m(comp.dc, 1)}</div><div class="mi-unit">ms</div></div>` : ''}
+            ${comp.ac != null ? `<div class="metric-item"><div class="mi-label">AC (aceleración) ${_miInfo('ac')}</div><div class="mi-value">${m(comp.ac, 1)}</div><div class="mi-unit">ms</div></div>` : ''}
           </div>
         </div>
       </div>`;
@@ -2189,8 +2241,14 @@ const UI = {
     const m = MathUtils.fmt;
     const meta = rec.metadata || {};
     const { td, fd, nl, comp } = rec;
-    const now = new Date().toLocaleString('es');
+    const rr   = rec.cleanRR || rec.rrMs;
+    const prsa = rr && rr.length >= 120 ? NonStationary.prsa(rr) : null;
+    const now     = new Date().toLocaleString('es');
     const recDate = new Date(rec.created).toLocaleString('es');
+    const MI = METRIC_INFO; // shorthand
+
+    const row = (label, val, unit, normal, interp) =>
+      `<tr><td>${label}</td><td class="mono">${val}</td><td>${unit}</td><td>${normal}</td><td>${interp}</td></tr>`;
 
     return `
     <div style="font-family:'Outfit',sans-serif">
@@ -2202,79 +2260,106 @@ const UI = {
         <div style="text-align:right;font-size:11px;color:var(--text-muted)">
           <div>Generado: ${now}</div>
           <div>Grabación: ${recDate}</div>
+          <div>N = ${rr?.length ?? '—'} latidos · ${td?.totalDuration ? (td.totalDuration/60).toFixed(1) + ' min' : '—'}</div>
           <div style="font-weight:600;color:var(--text)">HRV Studio v1.0</div>
         </div>
       </div>
 
       <div class="report-section">
-        <div class="report-section-title">INFORMACIÓN DEL PACIENTE</div>
+        <div class="report-section-title">INFORMACIÓN DEL SUJETO / PROTOCOLO</div>
         <table class="report-table">
-          <tr><th>Paciente</th><td>${meta.name || '—'}</td><th>ID</th><td>${meta.id || '—'}</td></tr>
+          <tr><th>Paciente / ID</th><td>${meta.name || '—'}</td><th>Código</th><td>${meta.id || '—'}</td></tr>
           <tr><th>Fecha de nac.</th><td>${meta.dob || '—'}</td><th>Sexo</th><td>${meta.sex || '—'}</td></tr>
-          <tr><th>Edad</th><td>${meta.age ? meta.age + ' años' : '—'}</td><th>Condición</th><td>${meta.condition || '—'}</td></tr>
+          <tr><th>Edad</th><td>${meta.age ? meta.age + ' años' : '—'}</td><th>Peso / Altura</th><td>${meta.weight ? meta.weight + ' kg' : '—'} / ${meta.height ? meta.height + ' cm' : '—'}</td></tr>
+          <tr><th>Condición / Protocolo</th><td>${meta.condition || '—'}</td><th>Duración grabación</th><td>${meta.duration || (td?.totalDuration ? (td.totalDuration/60).toFixed(1) + ' min' : '—')}</td></tr>
+          <tr><th>Medicamentos</th><td colspan="3">${meta.meds || '—'}</td></tr>
           <tr><th>Institución</th><td colspan="3">${meta.institution || '—'}</td></tr>
-          ${meta.notes ? `<tr><th>Notas</th><td colspan="3">${meta.notes}</td></tr>` : ''}
+          ${meta.notes ? `<tr><th>Notas clínicas</th><td colspan="3">${meta.notes}</td></tr>` : ''}
         </table>
       </div>
 
       ${td ? `<div class="report-section">
-        <div class="report-section-title">MÉTRICAS DE DOMINIO TEMPORAL</div>
+        <div class="report-section-title">DOMINIO TEMPORAL</div>
         <table class="report-table">
-          <tr><th>Métrica</th><th>Valor</th><th>Unidad</th><th>Rango normal</th></tr>
-          <tr><td>Media RR</td><td class="mono">${m(td.mean, 1)}</td><td>ms</td><td>600–1000 ms</td></tr>
-          <tr><td>FC media</td><td class="mono">${m(td.meanHR, 1)}</td><td>bpm</td><td>60–100 bpm</td></tr>
-          <tr><td>FC mín / máx</td><td class="mono">${m(td.minHR, 1)} / ${m(td.maxHR, 1)}</td><td>bpm</td><td>—</td></tr>
-          <tr><td>SDNN</td><td class="mono">${m(td.sdnn, 1)}</td><td>ms</td><td>50–100 ms (5 min)</td></tr>
-          <tr><td>RMSSD</td><td class="mono">${m(td.rmssd, 1)}</td><td>ms</td><td>20–50 ms</td></tr>
-          <tr><td>pNN50</td><td class="mono">${m(td.pnn50, 1)}</td><td>%</td><td>&gt;5%</td></tr>
-          <tr><td>NN50</td><td class="mono">${td.nn50}</td><td>latidos</td><td>—</td></tr>
-          <tr><td>Índice triangular</td><td class="mono">${m(td.triIndex, 1)}</td><td>u.a.</td><td>&gt;15</td></tr>
-          <tr><td>CV</td><td class="mono">${m(td.cv, 2)}</td><td>%</td><td>—</td></tr>
-          <tr><td>N latidos</td><td class="mono">${td.n}</td><td>latidos</td><td>—</td></tr>
-          <tr><td>Duración total</td><td class="mono">${td.totalDuration ? (td.totalDuration/60).toFixed(1) : '—'}</td><td>min</td><td>—</td></tr>
+          <tr><th>Métrica</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr>
+          ${row('Media RR', m(td.mean,1), 'ms', MI.meanRR.r, MI.meanRR.a)}
+          ${row('FC media', m(td.meanHR,1), 'bpm', '60–100 bpm', 'Taquicardia > 100 bpm o bradicardia < 60 bpm pueden alterar interpretación de VFC')}
+          ${row('FC mín / FC máx', m(td.minHR,1)+' / '+m(td.maxHR,1), 'bpm', '—', 'Rango estrecho: rigidez autonómica; rango amplio: buena reserva')}
+          ${row('SDNN', m(td.sdnn,1), 'ms', MI.sdnn.r, MI.sdnn.a)}
+          ${row('RMSSD', m(td.rmssd,1), 'ms', MI.rmssd.r, MI.rmssd.a)}
+          ${row('pNN50', m(td.pnn50,1), '%', MI.pnn50.r, MI.pnn50.a)}
+          ${row('NN50', td.nn50, 'latidos', 'Depende de duración', 'Interpretar como porcentaje (pNN50); valor absoluto depende del N total')}
+          ${row('pNN20', m(td.pnn20,1), '%', MI.pnn20.r, MI.pnn20.a)}
+          ${row('CV', m(td.cv,2), '%', MI.cv.r, MI.cv.a)}
+          ${row('Índice Triangular', m(td.triIndex,1), 'u.a.', MI.triIndex.r, MI.triIndex.a)}
+          ${row('RR mínimo / máximo', td.minRR+' / '+td.maxRR, 'ms', '—', 'Valores extremos: posibles ectopias o artefactos; revisar tachograma')}
+          ${row('SD HR', m(td.sdHR,1), 'bpm', '5–20 bpm', 'Alto: gran variabilidad de FC; bajo: FC rígida')}
+          ${td.sdann != null ? row('SDANN', m(td.sdann,1), 'ms', MI.sdann.r, MI.sdann.a) : ''}
+          ${td.sdnni != null ? row('SDNNi', m(td.sdnni,1), 'ms', MI.sdnni.r, MI.sdnni.a) : ''}
+          ${row('N latidos', td.n, 'latidos', '≥ 300 (5 min)', 'Grabaciones muy cortas reducen fiabilidad de todos los índices')}
         </table>
       </div>` : ''}
 
       ${fd ? `<div class="report-section">
-        <div class="report-section-title">MÉTRICAS DE DOMINIO FRECUENCIAL</div>
+        <div class="report-section-title">DOMINIO FRECUENCIAL — Lomb-Scargle (no paramétrico)</div>
         <table class="report-table">
-          <tr><th>Banda</th><th>Rango (Hz)</th><th>Potencia (ms²)</th><th>Normalizada (n.u.)</th></tr>
-          <tr><td>VLF</td><td class="mono">0.003–0.04</td><td class="mono">${fd.vlf}</td><td>—</td></tr>
-          <tr><td>LF</td><td class="mono">0.04–0.15</td><td class="mono">${fd.lf}</td><td class="mono">${m(fd.lfNorm, 1)}</td></tr>
-          <tr><td>HF</td><td class="mono">0.15–0.4</td><td class="mono">${fd.hf}</td><td class="mono">${m(fd.hfNorm, 1)}</td></tr>
-          <tr><td>Total</td><td>—</td><td class="mono">${fd.total}</td><td>—</td></tr>
-          <tr><td colspan="3">LF/HF ratio</td><td class="mono">${m(fd.lfhf, 3)}</td></tr>
+          <tr><th>Banda / Métrica</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr>
+          ${row('VLF (0.003–0.04 Hz)', fd.vlf, 'ms²', MI.vlf.r, MI.vlf.a)}
+          ${row('LF (0.04–0.15 Hz)', fd.lf, 'ms²', MI.lf.r, MI.lf.a)}
+          ${row('HF (0.15–0.4 Hz)', fd.hf, 'ms²', MI.hf.r, MI.hf.a)}
+          ${row('Potencia Total', fd.total, 'ms²', '—', 'Suma VLF+LF+HF; correlaciona con SDNN²')}
+          ${row('LF norm', m(fd.lfNorm,1), 'n.u.', MI.lfNorm.r, MI.lfNorm.a)}
+          ${row('HF norm', m(fd.hfNorm,1), 'n.u.', MI.hfNorm.r, MI.hfNorm.a)}
+          ${row('LF/HF ratio', m(fd.lfhf,3), '—', MI.lfhf.r, MI.lfhf.a)}
+          ${row('Pico LF', fd.lfPeakF, 'Hz', MI.lfPeakF.r, MI.lfPeakF.a)}
+          ${row('Pico HF', fd.hfPeakF, 'Hz', MI.hfPeakF.r, MI.hfPeakF.a)}
         </table>
       </div>` : ''}
 
       ${nl ? `<div class="report-section">
-        <div class="report-section-title">MÉTRICAS NO LINEALES</div>
+        <div class="report-section-title">ANÁLISIS NO LINEAL</div>
         <table class="report-table">
-          <tr><th>Métrica</th><th>Valor</th><th>Descripción</th></tr>
-          <tr><td>SD1</td><td class="mono">${m(nl.sd1, 1)} ms</td><td>Variabilidad a corto plazo (Poincaré, vagal)</td></tr>
-          <tr><td>SD2</td><td class="mono">${m(nl.sd2, 1)} ms</td><td>Variabilidad a largo plazo (Poincaré)</td></tr>
-          <tr><td>SD1/SD2</td><td class="mono">${m(nl.sd1sd2, 3)}</td><td>Balance autonómico</td></tr>
-          <tr><td>SampEn</td><td class="mono">${nl.sampen != null ? m(nl.sampen, 4) : '—'}</td><td>Entropía muestral (m=${state.settings.sampEnM}, r=${state.settings.sampEnR}×SDNN)</td></tr>
-          <tr><td>ApEn</td><td class="mono">${nl.apen != null ? m(nl.apen, 4) : '—'}</td><td>Entropía aproximada</td></tr>
-          ${nl.alpha1 != null ? `<tr><td>DFA α1</td><td class="mono">${m(nl.alpha1, 4)}</td><td>Escala corta (4–16 latidos)</td></tr>` : ''}
-          ${nl.alpha2 != null ? `<tr><td>DFA α2</td><td class="mono">${m(nl.alpha2, 4)}</td><td>Escala larga (16–64 latidos)</td></tr>` : ''}
+          <tr><th>Métrica</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr>
+          ${row('SD1 (Poincaré)', m(nl.sd1,1), 'ms', MI.sd1.r, MI.sd1.a)}
+          ${row('SD2 (Poincaré)', m(nl.sd2,1), 'ms', MI.sd2.r, MI.sd2.a)}
+          ${row('SD1/SD2', m(nl.sd1sd2,3), '—', MI.sd1sd2.r, MI.sd1sd2.a)}
+          ${row('SampEn', nl.sampen != null ? m(nl.sampen,4) : '—', 'bits', MI.sampen.r, MI.sampen.a)}
+          ${row('ApEn', nl.apen != null ? m(nl.apen,4) : '—', 'bits', MI.apen.r, MI.apen.a)}
+          ${nl.alpha1 != null ? row('DFA α1 (corto plazo)', m(nl.alpha1,4), '—', MI.alpha1.r, MI.alpha1.a) : ''}
+          ${nl.alpha2 != null ? row('DFA α2 (largo plazo)', m(nl.alpha2,4), '—', MI.alpha2.r, MI.alpha2.a) : ''}
+          ${nl.corrDim != null ? row('Dim. de Correlación D2', m(nl.corrDim,3), '—', MI.corrDim.r, MI.corrDim.a) : ''}
         </table>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:6px">SampEn/ApEn: m=${state.settings.sampEnM}, r=${state.settings.sampEnR}×SDNN</div>
       </div>` : ''}
 
       ${comp ? `<div class="report-section">
-        <div class="report-section-title">ÍNDICES COMPUESTOS Y AUTONÓMICOS</div>
+        <div class="report-section-title">ÍNDICES COMPUESTOS Y BALANCE AUTONÓMICO</div>
         <table class="report-table">
-          <tr><th>Índice</th><th>Valor</th><th>Descripción</th></tr>
-          ${comp.cvi != null ? `<tr><td>CVI</td><td class="mono">${m(comp.cvi, 3)}</td><td>Índice de actividad vagal cardíaca</td></tr>` : ''}
-          ${comp.csi != null ? `<tr><td>CSI</td><td class="mono">${m(comp.csi, 2)}</td><td>Índice de actividad simpática cardíaca</td></tr>` : ''}
-          ${comp.stressIndex != null ? `<tr><td>Índice de estrés</td><td class="mono">${m(comp.stressIndex, 2)}</td><td>Índice de Baevsky (carga regulatoria)</td></tr>` : ''}
-          ${comp.vagusPower != null ? `<tr><td>Potencia vagal</td><td class="mono">${m(comp.vagusPower, 1)}%</td><td>Fracción HF del espectro total</td></tr>` : ''}
-          ${comp.symPower != null ? `<tr><td>Potencia simpática</td><td class="mono">${m(comp.symPower, 1)}%</td><td>Fracción LF del espectro total</td></tr>` : ''}
+          <tr><th>Índice</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr>
+          ${comp.cvi != null ? row('CVI (Cardiac Vagal Index)', m(comp.cvi,3), '—', MI.cvi.r, MI.cvi.a) : ''}
+          ${comp.csi != null ? row('CSI (Cardiac Sympathetic Index)', m(comp.csi,2), '—', MI.csi.r, MI.csi.a) : ''}
+          ${comp.gsi != null ? row('GSI (Índice Geométrico SV)', m(comp.gsi,1), 'ms', MI.gsi.r, MI.gsi.a) : ''}
+          ${comp.stressIndex != null ? row('Índice de Estrés (Baevsky)', m(comp.stressIndex,2), 'u.a.', MI.stressIndex.r, MI.stressIndex.a) : ''}
+          ${comp.vagusPower != null ? row('Potencia Vagal (% espectral)', m(comp.vagusPower,1), '%', MI.vagusPower.r, MI.vagusPower.a) : ''}
+          ${comp.symPower != null ? row('Potencia Simpática (% espectral)', m(comp.symPower,1), '%', MI.symPower.r, MI.symPower.a) : ''}
+          ${comp.dc != null ? row('DC — Capacidad de Desaceleración', m(comp.dc,2), 'ms', MI.dc.r, MI.dc.a) : ''}
+          ${comp.ac != null ? row('AC — Capacidad de Aceleración', m(comp.ac,2), 'ms', MI.ac.r, MI.ac.a) : ''}
         </table>
       </div>` : ''}
 
+      ${prsa ? `<div class="report-section">
+        <div class="report-section-title">PRSA — PHASE-RECTIFIED SIGNAL AVERAGING (Bauer et al. 2006)</div>
+        <table class="report-table">
+          <tr><th>Índice</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr>
+          ${row('DC — Capacidad de Desaceleración', m(prsa.DC,2), 'ms', MI.dc.r, MI.dc.a)}
+          ${row('AC — Capacidad de Aceleración', m(prsa.AC,2), 'ms', MI.ac.r, MI.ac.a)}
+        </table>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:6px">L = ${prsa.L} latidos. DC > 4.5 ms indica actividad vagal preservada. Predictor independiente de mortalidad cardíaca.</div>
+      </div>` : ''}
+
       <div style="margin-top:24px;padding-top:12px;border-top:1px solid var(--border);font-size:10px;color:var(--text-muted)">
-        <strong>Nota:</strong> Este reporte fue generado automáticamente por HRV Studio para fines informativos. Los valores de referencia son orientativos y pueden variar según el protocolo de medición, duración del registro, edad, sexo y condición del sujeto. Consultar bibliografía Task Force ESC/NASPE (1996) y guías actualizadas para interpretación clínica.
+        <strong>Referencias:</strong> Task Force ESC/NASPE (1996) Eur Heart J 17:354-381 · Peng et al. (1995) Chaos 5:82 · Bauer et al. (2006) Lancet 367:1674 · Richman & Moorman (2000) AJP 278:H2039.<br>
+        <strong>Nota:</strong> Este reporte es generado automáticamente para fines informativos/investigación. Los rangos de referencia son orientativos; su interpretación clínica debe considerar el protocolo, la duración del registro, la edad, el sexo y el contexto del sujeto.
       </div>
     </div>`;
   },
@@ -2565,6 +2650,35 @@ const App = {
     });
     document.addEventListener('mousemove', e => App._tachoMouseMove(e));
     document.addEventListener('mouseup',   e => App._tachoMouseUp(e));
+    
+    // ── Info tooltip handler ──
+    const _infoTip = document.getElementById('infoTooltip');
+    document.addEventListener('mouseover', e => {
+      const icon = e.target.closest?.('.mi-info');
+      if (!icon || !_infoTip) return;
+      const info = METRIC_INFO[icon.dataset.metric];
+      if (!info) return;
+      _infoTip.innerHTML =
+        `<strong style="font-size:12px;color:var(--accent)">${info.n}</strong>` +
+        `<div style="color:var(--text-dim);margin:4px 0;line-height:1.4">${info.d}</div>` +
+        `<hr style="border:none;border-top:1px solid var(--border);margin:5px 0">` +
+        `<div style="color:var(--text-muted);font-size:10px">📐 ${info.c}</div>` +
+        `<div style="color:var(--success);font-size:10px">✓ Normal: ${info.r}</div>` +
+        `<div style="color:var(--warning);font-size:10px">⚠ Alterado: ${info.a}</div>`;
+      _infoTip.hidden = false;
+      const rc = icon.getBoundingClientRect();
+      const tW = 256, tH = _infoTip.offsetHeight || 130;
+      let left = rc.left + rc.width / 2 - tW / 2;
+      let top  = rc.top - tH - 8;
+      if (left + tW > window.innerWidth - 10) left = window.innerWidth - tW - 10;
+      if (left < 10) left = 10;
+      if (top  < 10) top  = rc.bottom + 8;
+      _infoTip.style.left = left + 'px';
+      _infoTip.style.top  = top  + 'px';
+    });
+    document.addEventListener('mouseout', e => {
+      if (e.target.closest?.('.mi-info') && _infoTip) _infoTip.hidden = true;
+    });
   },
   
   _bindTachogramEvents(rrMs) {

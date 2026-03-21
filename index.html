@@ -479,8 +479,7 @@
     <div class="modal-body" id="reportBody" style="font-size:12px"></div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="UI.closeModal('reportModal')">Cerrar</button>
-      <button class="btn btn-secondary" onclick="IO.exportReportHTML()">💾 Guardar HTML</button>
-      <button class="btn btn-primary" onclick="window.print()">🖨 Imprimir / PDF</button>
+      <button class="btn btn-primary" onclick="IO.exportReportHTML()">💾 Guardar HTML</button>
     </div>
   </div>
 </div>
@@ -490,6 +489,9 @@
   <span class="notif-icon" id="notifIcon">✓</span>
   <span class="notif-msg" id="notifMsg">Mensaje</span>
 </div>
+
+<!-- Floating metric info tooltip -->
+<div id="infoTooltip" hidden></div>
 
 <script src="js/app.js"></script>
 </body>

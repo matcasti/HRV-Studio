@@ -589,3 +589,26 @@ canvas { max-width: 100%; }
 .prsa-metric { text-align: center; padding: 8px; background: var(--card2); border-radius: 8px; border: 1px solid var(--border); }
 .prsa-metric .pm-val { font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 700; color: var(--accent); }
 .prsa-metric .pm-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+
+/* ===== METRIC INFO ICON & FLOATING TOOLTIP ===== */
+.mi-info {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 1px solid var(--text-muted);
+  font-size: 8px; font-weight: 700; font-style: normal;
+  color: var(--text-muted); cursor: help;
+  margin-left: 3px; vertical-align: middle; line-height: 1;
+  flex-shrink: 0; user-select: none;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+.mi-info:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); }
+
+#infoTooltip {
+  position: fixed; z-index: 2000;
+  background: var(--card2); border: 1px solid var(--border-light);
+  border-radius: 10px; padding: 10px 12px;
+  width: 256px; box-shadow: var(--shadow);
+  font-size: 11px; line-height: 1.45;
+  pointer-events: none;
+  animation: fadeIn 0.1s ease;
+}
