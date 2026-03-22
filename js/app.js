@@ -2310,18 +2310,30 @@ const IO = {
     const MI     = METRIC_INFO;
     // Precompute per-window PSD for embedded charts
     const winChartData = wins.filter(w => w.analysis).map(w => {
-      const slice  = rr ? Array.from(rr.slice(w.startBeat, w.endBeat + 1)) : [];
-      const wLs    = slice.length >= 30 ? LombScargle.compute(slice, state.settings) : null;
-      return {
-        label: w.label, color: w.color || '#00C2D4',
-        rr:    slice.slice(0, 600),
-        psdF:  wLs ? wLs.freqs : null,
-        psdP:  wLs ? wLs.psd   : null,
-        vlfMin: state.settings.vlfMin, vlfMax: state.settings.vlfMax,
-        lfMin:  state.settings.lfMin,  lfMax:  state.settings.lfMax,
-        hfMin:  state.settings.hfMin,  hfMax:  state.settings.hfMax
-      };
-    });
+        const slice  = rr ? Array.from(rr.slice(w.startBeat, w.endBeat + 1)) : [];
+        const wLs    = slice.length >= 30 ? LombScargle.compute(slice, state.settings) : null;
+        const wt     = w.analysis.td;
+        const wf     = w.analysis.fd;
+        const wn     = w.analysis.nl;
+        const wc     = w.analysis.comp;
+        return {
+          label:  w.label,  color:  w.color || '#00C2D4',
+          rr:     slice.slice(0, 1000),
+          psdF:   wLs ? wLs.freqs : null,
+          psdP:   wLs ? wLs.psd   : null,
+          vlfMin: state.settings.vlfMin, vlfMax: state.settings.vlfMax,
+          lfMin:  state.settings.lfMin,  lfMax:  state.settings.lfMax,
+          hfMin:  state.settings.hfMin,  hfMax:  state.settings.hfMax,
+          // Metrics for the bar
+          beats:  w.analysis.beatCount ?? slice.length,
+          dur:    w.analysis.durationMin,
+          sdnn:   wt?.sdnn,   rmssd:  wt?.rmssd,  pnn50:  wt?.pnn50,
+          meanHR: wt?.meanHR, lfhf:   wf?.lfhf,   sd1:    wn?.sd1,
+          sd2:    wn?.sd2,    sampen: wn?.sampen,  dc:     wc?.dc,
+          lf:     wf?.lf,    hf:     wf?.hf,      lfNorm: wf?.lfNorm,
+          hfNorm: wf?.hfNorm
+        };
+      });
     const now     = new Date().toLocaleString('es');
     const recDate = new Date(rec.created).toLocaleString('es');
 
@@ -2394,7 +2406,43 @@ const IO = {
       .ch2col{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
       .ch2col-big{display:grid;grid-template-columns:3fr 2fr;gap:14px}
       .chart-legend{font-size:9px;color:#8a9bb8;margin-bottom:6px;display:flex;gap:10px;flex-wrap:wrap}
-      </style>
+        /* ── Section dividers ── */
+        .sec-divider{margin:28px 0 20px;padding:14px 22px;
+          background:linear-gradient(135deg,#09253f 0%,#0d3a5a 50%,#1558a0 100%);
+          border-radius:10px;color:#fff}
+        .sec-divider-title{font-size:18px;font-weight:700;letter-spacing:-.3px;margin-bottom:3px}
+        .sec-divider-sub{font-size:11px;opacity:.6}
+        /* ── Per-window chart cards ── */
+        .win-card{margin-bottom:28px;border:1px solid #d0dae9;border-radius:12px;
+          overflow:hidden;break-inside:avoid;page-break-inside:avoid;background:#fff;
+          box-shadow:0 2px 10px rgba(0,0,0,.06)}
+        .win-card-hdr{padding:12px 20px;display:flex;align-items:center;gap:10px;color:#fff;font-size:14px;font-weight:600}
+        .win-card-hdr-dot{width:11px;height:11px;border-radius:50%;
+          border:2px solid rgba(255,255,255,.5);flex-shrink:0}
+        .win-card-hdr-meta{margin-left:auto;font-size:10px;font-weight:400;opacity:.65}
+        .win-chart-block{padding:14px 18px;border-bottom:1px solid #eef2f8}
+        .win-chart-label{font-size:8px;font-weight:700;letter-spacing:2px;
+          text-transform:uppercase;color:#6a7d96;margin-bottom:8px}
+        .win-chart-pair{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #eef2f8}
+        .win-chart-pair-item{padding:14px 18px}
+        .win-chart-pair-item:first-child{border-right:1px solid #eef2f8}
+        .win-metrics-bar{display:flex;flex-wrap:wrap;background:#f7fafd}
+        .wm-item{flex:1;min-width:90px;text-align:center;padding:11px 8px;
+          border-right:1px solid #eef2f8}
+        .wm-item:last-child{border-right:none}
+        .wm-label{font-size:8px;font-weight:700;letter-spacing:1.2px;
+          text-transform:uppercase;color:#8a9bb8;margin-bottom:4px}
+        .wm-val{font-family:'JetBrains Mono',monospace;font-size:18px;
+          font-weight:700;color:#1457b8;line-height:1}
+        .wm-unit{font-size:9px;color:#b0baca;margin-top:3px}
+        .wm-nd{color:#c0cad8 !important}
+        @media print{
+          .win-card{break-inside:avoid;page-break-inside:avoid}
+          .sec-divider{background:linear-gradient(135deg,#09253f,#1558a0)!important;
+            -webkit-print-color-adjust:exact;print-color-adjust:exact}
+          #sec-ii{break-before:page;page-break-before:always}
+        }
+        </style>
       </head>
       <body>
       <div class="page">
@@ -2477,16 +2525,9 @@ const IO = {
       </div>
 
       ${winChartData.length ? `
-      <div class="sec">
-        <div class="sec-title"><span class="sec-title-bar"></span>REPRESENTACIONES GRÁFICAS — VENTANAS DE ANÁLISIS</div>
-        <p style="font-size:11px;color:#6a7d96;margin-bottom:12px">
-          ${winChartData.length} ventana${winChartData.length!==1?'s':''} definida${winChartData.length!==1?'s':''}.
-          Tacograma, diagrama de Poincaré y PSD (Lomb-Scargle) por segmento.
-        </p>
-        <div id="win-charts-container"
-          style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px">
-          <!-- populated by JS after Chart.js loads -->
-        </div>
+      <div class="sec-divider">
+        <div class="sec-divider-title">§ I — Registro Completo</div>
+        <div class="sec-divider-sub">${rr?.length ?? '?'} lat. · ${td?.totalDuration ? (td.totalDuration/60).toFixed(1) : '?'} min · Análisis HRV de la grabación íntegra</div>
       </div>` : ''}
 
       ${td ? `<div class="sec">
@@ -2577,6 +2618,13 @@ const IO = {
         </table>
         <div class="note">L = ${prsa.L} latidos. DC &gt; 4.5 ms indica actividad vagal preservada. Predictor independiente de mortalidad cardíaca súbita (HR 5.6× si DC &lt; 2.5 ms, Bauer et al. Lancet 2006).</div>
       </div>` : ''}
+
+      ${winChartData.length ? `
+      <div id="sec-ii" class="sec-divider">
+        <div class="sec-divider-title">§ II — Análisis por Ventanas</div>
+        <div class="sec-divider-sub">${winChartData.length} ventana${winChartData.length!==1?'s':''} · Tacograma · Poincaré · PSD y estadísticos por segmento</div>
+      </div>
+      <div id="win-charts-container"></div>` : ''}
 
       ${IO._buildWindowsReportSection(wins, true)}
       
@@ -2687,43 +2735,94 @@ const IO = {
           ctx.save(); ctx.translate(10,H/2); ctx.rotate(-1.5708); ctx.fillText('RR(n+1)',0,0); ctx.restore();
         }
         // ── Per-window chart rendering ──────────────────────────────────────
+        function fmtN(v, d) { return (v == null || isNaN(v)) ? '—' : (+v).toFixed(d || 1); }
+
         function buildWinCharts() {
           var container = document.getElementById('win-charts-container');
-          if (!container || !D.winData || !D.winData.length) return;
+          if (!container || !D.winData || !D.winData.length || typeof Chart === 'undefined') return;
+
           D.winData.forEach(function(w, wi) {
             if (!w.rr || !w.rr.length) return;
-            var hasPSD = w.psdF && w.psdF.length;
-            var cols   = hasPSD ? '1fr 1fr 1fr' : '1fr 1fr';
-            var block  = document.createElement('div');
-            block.style.cssText =
-              'border:1px solid #d8e2f0;border-radius:10px;overflow:hidden;break-inside:avoid;background:#fff';
-            block.innerHTML =
-              '<div style="padding:9px 14px;background:linear-gradient(90deg,#09253f,'+ w.color +');' +
-              'color:#fff;display:flex;align-items:center;gap:8px;font-size:12px">' +
-                '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;' +
-                'background:'+w.color+';border:1px solid rgba(255,255,255,.4);flex-shrink:0"></span>' +
-                '<strong>' + w.label + '</strong>' +
-                '<span style="margin-left:auto;font-size:10px;opacity:.65">' + w.rr.length + ' lat.</span>' +
+            var hasPSD = !!(w.psdF && w.psdF.length);
+
+            // ── Metrics bar definition ─────────────────────────────────────
+            var kMetrics = [
+              { label:'SDNN',     val: fmtN(w.sdnn,  1), unit:'ms'   },
+              { label:'RMSSD',    val: fmtN(w.rmssd, 1), unit:'ms'   },
+              { label:'pNN50',    val: fmtN(w.pnn50, 1), unit:'%'    },
+              { label:'LF/HF',    val: fmtN(w.lfhf,  2), unit:'ratio'},
+              { label:'SD1',      val: fmtN(w.sd1,   1), unit:'ms'   },
+              { label:'SampEn',   val: fmtN(w.sampen,2), unit:'bits' }
+            ];
+
+            // ── Build card HTML ────────────────────────────────────────────
+            var card = document.createElement('div');
+            card.className = 'win-card';
+
+            // Header
+            var hdr = document.createElement('div');
+            hdr.className = 'win-card-hdr';
+            hdr.style.background = 'linear-gradient(135deg,#09253f 0%,' + w.color + ' 100%)';
+            hdr.innerHTML =
+              '<span class="win-card-hdr-dot" style="background:' + w.color + '"></span>' +
+              '<span>' + w.label + '</span>' +
+              '<span class="win-card-hdr-meta">' +
+                (w.beats || w.rr.length) + ' lat. · ' +
+                fmtN(w.dur, 2) + ' min' +
+              '</span>';
+            card.appendChild(hdr);
+
+            // Row 1: full-width tacogram
+            var tacBlock = document.createElement('div');
+            tacBlock.className = 'win-chart-block';
+            tacBlock.innerHTML =
+              '<div class="win-chart-label">Tacograma de Intervalos RR</div>' +
+              '<div style="position:relative;height:175px"><canvas id="rwt-' + wi + '"></canvas></div>';
+            card.appendChild(tacBlock);
+
+            // Row 2: Poincaré + PSD side by side
+            var pair = document.createElement('div');
+            pair.className = 'win-chart-pair';
+            pair.innerHTML =
+              '<div class="win-chart-pair-item">' +
+                '<div class="win-chart-label">Diagrama de Poincaré — RR(n) vs RR(n+1)</div>' +
+                '<canvas id="rwp-' + wi + '" style="display:block;width:100%;height:220px"></canvas>' +
               '</div>' +
-              '<div style="padding:10px;display:grid;grid-template-columns:' + cols + ';gap:8px">' +
-                '<div><div class="chart-label">TACOGRAMA</div>' +
-                  '<div style="height:90px;position:relative"><canvas id="rwt-'+wi+'"></canvas></div></div>' +
-                '<div><div class="chart-label">POINCARÉ RR(n) vs RR(n+1)</div>' +
-                  '<canvas id="rwp-'+wi+'" style="display:block;width:100%;height:90px"></canvas></div>' +
-                (hasPSD ?
-                  '<div><div class="chart-label">PSD (LOMB-SCARGLE)</div>' +
-                  '<div style="height:90px;position:relative"><canvas id="rwf-'+wi+'"></canvas></div></div>'
-                  : '') +
+              '<div class="win-chart-pair-item">' +
+                '<div class="win-chart-label">Densidad Espectral de Potencia (Lomb-Scargle)' +
+                  (hasPSD ? '' : ' — datos insuficientes') + '</div>' +
+                (hasPSD
+                  ? '<div style="position:relative;height:220px"><canvas id="rwf-' + wi + '"></canvas></div>'
+                  : '<div style="height:220px;display:flex;align-items:center;justify-content:center;' +
+                      'font-size:11px;color:#b0baca">&lt; 30 latidos requeridos para PSD</div>'
+                ) +
               '</div>';
-            container.appendChild(block);
+            card.appendChild(pair);
+
+            // Row 3: metrics bar
+            var mBar = document.createElement('div');
+            mBar.className = 'win-metrics-bar';
+            mBar.innerHTML = kMetrics.map(function(m) {
+              var isNd = m.val === '—';
+              return '<div class="wm-item">' +
+                '<div class="wm-label">' + m.label + '</div>' +
+                '<div class="wm-val' + (isNd ? ' wm-nd' : '') + '">' + m.val + '</div>' +
+                '<div class="wm-unit">' + (isNd ? '—' : m.unit) + '</div>' +
+              '</div>';
+            }).join('');
+            card.appendChild(mBar);
+
+            container.appendChild(card);
           });
-          // Render charts after elements exist in DOM
+
+          // Render all charts after DOM elements exist
           requestAnimationFrame(function() {
             D.winData.forEach(function(w, wi) {
               if (!w.rr || !w.rr.length) return;
-              try { rWinTacho(wi, w); }    catch(e) {}
-              try { rWinPoincare(wi, w); } catch(e) {}
-              if (w.psdF) try { rWinPSD(wi, w); } catch(e) {}
+              try { rWinTacho(wi, w); }    catch(e) { console.warn('win tacho', e); }
+              try { rWinPoincare(wi, w); } catch(e) { console.warn('win poincaré', e); }
+              if (w.psdF && w.psdF.length)
+                try { rWinPSD(wi, w); }    catch(e) { console.warn('win psd', e); }
             });
           });
         }
@@ -2731,60 +2830,133 @@ const IO = {
 
         function rWinTacho(wi, w) {
           var el = document.getElementById('rwt-' + wi);
-          if (!el || typeof Chart === 'undefined') return;
-          new Chart(el, { type: 'line',
-            data: { labels: w.rr.map(function(_,i){return i+1;}),
-              datasets: [{ data: w.rr, borderColor: w.color || C.a, borderWidth: 1.2,
-                pointRadius: 0, fill: false, tension: 0 }] },
-            options: ax(
-              { title:{display:true,text:'Latido #',color:C.t,font:{size:8}} },
-              { title:{display:true,text:'ms',color:C.t,font:{size:8}} }
-            )
+          if (!el) return;
+          new Chart(el, {
+            type: 'line',
+            data: {
+              labels: w.rr.map(function(_, i) { return i + 1; }),
+              datasets: [{
+                data: w.rr, borderColor: w.color, borderWidth: 1.3,
+                pointRadius: 0, fill: false, tension: 0
+              }]
+            },
+            options: Object.assign({}, ax(
+              { title: { display: true, text: 'Latido #', color: C.t, font: { size: 9 } } },
+              { title: { display: true, text: 'RR (ms)', color: C.t, font: { size: 9 } } }
+            ), {
+              plugins: { legend: { display: false }, tooltip: {
+                enabled: true, backgroundColor: '#fff',
+                borderColor: '#d8e2f0', borderWidth: 1,
+                titleColor: '#1a2535', bodyColor: '#4a5e78', padding: 6,
+                callbacks: {
+                  title: function(ctx) { return 'Latido #' + ctx[0].dataIndex; },
+                  label: function(ctx) { return 'RR: ' + Math.round(ctx.raw) + ' ms'; }
+                }
+              }}
+            })
           });
         }
 
         function rWinPoincare(wi, w) {
           var cv = document.getElementById('rwp-' + wi);
           if (!cv) return;
-          var W = cv.offsetWidth || 150, H = cv.offsetHeight || 90;
-          cv.width = W; cv.height = H;
-          var ctx2 = cv.getContext('2d'), pad = 16;
-          var mn = Math.min.apply(null, w.rr) * 0.97;
-          var mx = Math.max.apply(null, w.rr) * 1.03;
-          var sX = function(v) { return pad + (v-mn)/(mx-mn)*(W-2*pad); };
-          var sY = function(v) { return H-pad-(v-mn)/(mx-mn)*(H-2*pad); };
-          ctx2.fillStyle = '#f7fafd'; ctx2.fillRect(0,0,W,H);
-          ctx2.strokeStyle = 'rgba(192,120,0,.25)'; ctx2.lineWidth = 0.8;
-          ctx2.setLineDash([3,3]);
-          ctx2.beginPath(); ctx2.moveTo(sX(mn),sY(mn)); ctx2.lineTo(sX(mx),sY(mx)); ctx2.stroke();
-          ctx2.setLineDash([]);
-          ctx2.fillStyle = (w.color || '#1457b8') + '55';
-          for (var i = 0; i < Math.min(w.rr.length-1, 400); i++) {
-            ctx2.beginPath(); ctx2.arc(sX(w.rr[i]), sY(w.rr[i+1]), 1.8, 0, 6.283); ctx2.fill();
+          // Use physical pixel dimensions for crisp rendering
+          var W = cv.parentElement.offsetWidth || 320;
+          var H = 220;
+          var dpr = window.devicePixelRatio || 1;
+          cv.width  = W * dpr;
+          cv.height = H * dpr;
+          cv.style.width  = W + 'px';
+          cv.style.height = H + 'px';
+          var ctx2 = cv.getContext('2d');
+          ctx2.scale(dpr, dpr);
+
+          var pad = 28;
+          var pW  = W - 2 * pad, pH = H - 2 * pad;
+          var mn  = Math.min.apply(null, w.rr) * 0.97;
+          var mx  = Math.max.apply(null, w.rr) * 1.03;
+          var sX  = function(v) { return pad + (v - mn) / (mx - mn) * pW; };
+          var sY  = function(v) { return H - pad - (v - mn) / (mx - mn) * pH; };
+
+          ctx2.fillStyle = '#f7fafd';
+          ctx2.fillRect(0, 0, W, H);
+
+          // Grid
+          ctx2.strokeStyle = '#e8eef6'; ctx2.lineWidth = 0.5;
+          for (var gi = 0; gi <= 4; gi++) {
+            var gx = pad + gi / 4 * pW;
+            var gy = pad + gi / 4 * pH;
+            ctx2.beginPath(); ctx2.moveTo(gx, pad); ctx2.lineTo(gx, H - pad); ctx2.stroke();
+            ctx2.beginPath(); ctx2.moveTo(pad, gy); ctx2.lineTo(W - pad, gy); ctx2.stroke();
           }
-          ctx2.fillStyle = C.t; ctx2.font = '8px JetBrains Mono,monospace';
-          ctx2.textAlign = 'center'; ctx2.fillText('RR(n)', W/2, H-2);
+
+          // Identity line (RR(n) = RR(n+1))
+          ctx2.strokeStyle = 'rgba(192,120,0,.25)'; ctx2.lineWidth = 1; ctx2.setLineDash([4, 4]);
+          ctx2.beginPath(); ctx2.moveTo(sX(mn), sY(mn)); ctx2.lineTo(sX(mx), sY(mx)); ctx2.stroke();
+          ctx2.setLineDash([]);
+
+          // Points
+          var pts = Math.min(w.rr.length - 1, 700);
+          ctx2.fillStyle = (w.color || '#1457b8') + '60';
+          for (var pi = 0; pi < pts; pi++) {
+            ctx2.beginPath();
+            ctx2.arc(sX(w.rr[pi]), sY(w.rr[pi + 1]), 2.2, 0, 6.2832);
+            ctx2.fill();
+          }
+
+          // Axis labels
+          ctx2.fillStyle = '#8a9bb8'; ctx2.font = '9px JetBrains Mono,monospace';
+          ctx2.textAlign = 'center';
+          ctx2.fillText('RR(n) — ms', W / 2, H - 4);
+          ctx2.save(); ctx2.translate(10, H / 2); ctx2.rotate(-Math.PI / 2);
+          ctx2.fillText('RR(n+1) — ms', 0, 0); ctx2.restore();
+
+          // Tick labels
+          ctx2.fillStyle = '#b0baca'; ctx2.font = '8px JetBrains Mono,monospace';
+          ctx2.textAlign = 'right';
+          for (var ti = 0; ti <= 4; ti++) {
+            var tv = mn + ti / 4 * (mx - mn);
+            ctx2.fillText(Math.round(tv), pad - 3, sY(tv) + 3);
+          }
+          ctx2.textAlign = 'center';
+          for (var ti2 = 0; ti2 <= 4; ti2++) {
+            var tv2 = mn + ti2 / 4 * (mx - mn);
+            ctx2.fillText(Math.round(tv2), sX(tv2), H - pad + 11);
+          }
         }
 
         function rWinPSD(wi, w) {
           var el = document.getElementById('rwf-' + wi);
-          if (!el || typeof Chart === 'undefined') return;
+          if (!el) return;
           var bg = w.psdF.map(function(f) {
-            if (f >= w.vlfMin && f < w.vlfMax) return 'rgba(21,88,160,.55)';
-            if (f >= w.lfMin  && f < w.lfMax)  return 'rgba(192,120,0,.55)';
-            if (f >= w.hfMin  && f < w.hfMax)  return 'rgba(20,87,184,.45)';
-            return 'rgba(100,120,150,.1)';
+            if (f >= w.vlfMin && f < w.vlfMax) return 'rgba(21,88,160,.60)';
+            if (f >= w.lfMin  && f < w.lfMax)  return 'rgba(192,120,0,.60)';
+            if (f >= w.hfMin  && f < w.hfMax)  return 'rgba(20,87,184,.50)';
+            return 'rgba(100,120,150,.12)';
           });
-          new Chart(el, { type: 'bar',
-            data: { labels: w.psdF.map(function(f){return f.toFixed(3);}),
-              datasets: [{ data: w.psdP, backgroundColor: bg,
+          new Chart(el, {
+            type: 'bar',
+            data: {
+              labels: w.psdF.map(function(f) { return f.toFixed(3); }),
+              datasets: [{
+                data: w.psdP, backgroundColor: bg,
                 borderColor: 'transparent', borderWidth: 0,
-                barPercentage: 1.2, categoryPercentage: 1 }] },
-            options: ax(
-              { title:{display:true,text:'Hz',color:C.t,font:{size:8}},
-                ticks:{color:C.t,font:BF,maxTicksLimit:5} },
-              { title:{display:true,text:'ms²/Hz',color:C.t,font:{size:8}} }
-            )
+                barPercentage: 1.2, categoryPercentage: 1
+              }]
+            },
+            options: Object.assign({}, ax(
+              { title: { display: true, text: 'Frecuencia (Hz)', color: C.t, font: { size: 9 } },
+                ticks: { color: C.t, font: BF, maxTicksLimit: 6 } },
+              { title: { display: true, text: 'ms²/Hz', color: C.t, font: { size: 9 } } }
+            ), { plugins: { legend: { display: false }, tooltip: {
+              enabled: true, backgroundColor: '#fff',
+              borderColor: '#d8e2f0', borderWidth: 1, padding: 5,
+              titleColor: '#1a2535', bodyColor: '#4a5e78',
+              callbacks: {
+                title: function(ctx) { return w.psdF[ctx[0].dataIndex].toFixed(4) + ' Hz'; },
+                label: function(ctx) { return ctx.raw.toFixed(4) + ' ms²/Hz'; }
+              }
+            }}})
           });
         }
       })();

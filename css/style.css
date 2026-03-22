@@ -615,127 +615,185 @@ canvas { max-width: 100%; }
 
 /* ===== RESPONSIVE LAYOUT ===== */
 
-/* --- 1600px + : expand panels on big screens --- */
-@media (min-width: 1600px) {
-  .analyze-left { width: 360px; }
+/* ── 2200 px + : ultra-wide ── */
+@media (min-width: 2200px) {
+  .analyze-left { width: 440px; }
+  .clean-tools  { width: 360px; }
+  .library-grid { grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); }
+  .charts-grid  { grid-template-columns: 1fr 1fr 1fr; }
+}
+/* ── 1600 px – 2199 px ── */
+@media (min-width: 1600px) and (max-width: 2199px) {
+  .analyze-left { width: 380px; }
   .library-grid { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
   .charts-grid  { grid-template-columns: 1fr 1fr 1fr; }
 }
-@media (min-width: 2200px) {
-  .analyze-left { width: 420px; }
-  .library-grid { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
-}
-
-/* --- 1100px : single-col charts --- */
+/* ── 1400 px + : cap canvas height ── */
+@media (min-width: 1400px) { .chart-container { max-height: 280px; } }
+/* ── ≤ 1200 px ── */
+@media (max-width: 1200px) { .charts-grid { grid-template-columns: 1fr 1fr; } }
+/* ── ≤ 1100 px ── */
 @media (max-width: 1100px) {
-  .charts-grid { grid-template-columns: 1fr; }
-  .chart-row   { grid-template-columns: 1fr; }
+  .charts-grid  { grid-template-columns: 1fr; }
+  .chart-row    { grid-template-columns: 1fr; }
+  .prsa-grid    { grid-template-columns: 1fr; }
+  .sliding-grid { grid-template-columns: 1fr; }
+}
+/* ── ≤ 960 px : narrow panels ── */
+@media (max-width: 960px) {
+  .analyze-left { width: 240px; }
+  .clean-tools  { width: 220px; }
 }
 
-/* --- 900px : already handled by existing rule; extend it --- */
-@media (max-width: 900px) {
-  .analyze-left { width: 260px; }
-  .metric-grid  { grid-template-columns: 1fr 1fr; }
-  .clean-tools  { width: 240px; }
-  .sliding-grid, .prsa-grid { grid-template-columns: 1fr; }
-}
+/* ── ≤ 800 px : stack panels, icon sidebar ── */
+@media (max-width: 800px) {
+  /* Sidebar: icon-only strip */
+  #sidebar { width: 44px; }
+  .sidebar-section           { padding: 6px 2px; }
+  .sidebar-section-title     { display: none; }
+  .sidebar-scroll            { display: none; }
+  .search-box                { display: none; }
+  .folder-item               { padding: 7px 0; justify-content: center; }
+  .folder-item span:not(.fi-icon), .folder-item .fi-count { display: none; }
+  .folder-item .fi-icon      { font-size: 17px; }
 
-/* --- 768px : stack analyze + clean panels --- */
-@media (max-width: 768px) {
-  #header { padding: 0 10px; gap: 8px; height: auto; min-height: 48px; flex-wrap: wrap; }
-  .header-spacer { display: none; }
-
-  /* Nav: hide text labels, keep emoji */
-  .nav-label { display: none; }
-  .header-nav { gap: 1px; }
-  .nav-btn { padding: 5px 8px; font-size: 15px; }
-
-  /* Stack analyze layout */
-  .analyze-layout { flex-direction: column; }
-  .analyze-left   {
-    width: 100%; max-height: 45vh; overflow-y: auto;
+  /* Analyze: vertical stack */
+  .analyze-layout  { flex-direction: column; }
+  .analyze-left    {
+    width: 100% !important; max-height: 42vh; overflow-y: auto;
     border-right: none; border-bottom: 1px solid var(--border);
   }
-  .analyze-center { min-height: 0; }
+  .analyze-center  { flex: 1; min-height: 0; overflow-y: auto; }
 
-  /* Stack clean layout */
+  /* Clean: vertical stack */
   .clean-layout { flex-direction: column; }
-  .clean-tools  { width: 100%; max-height: 220px; overflow-y: auto; flex-direction: row; flex-wrap: wrap; }
-  .tool-section { min-width: 200px; flex: 1; }
-  .clean-chart-area { height: 260px; }
-
-  /* Modals */
-  .modal-xl { width: 96vw; height: 90vh; }
-  .modal-lg { width: 93vw; }
-  .modal-md { width: 91vw; }
-  .modal-sm { width: 88vw; }
-
-  /* Settings */
-  #view-settings { max-width: 100%; }
-  .settings-item { flex-wrap: wrap; }
-
-  /* Import modal grid */
-  .import-settings { grid-template-columns: 1fr 1fr; }
+  .clean-tools  {
+    width: 100% !important; border-right: none;
+    border-bottom: 1px solid var(--border);
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    max-height: 260px; overflow-y: auto; padding: 4px;
+  }
+  /* Title row spans full width */
+  .clean-tools > div:first-child { grid-column: 1 / -1; }
+  .clean-main       { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .clean-chart-area { flex: 1; min-height: 220px; }
 }
 
-/* --- 600px : mobile layout --- */
-@media (max-width: 600px) {
-  /* Sidebar: icon-only, smaller */
-  #sidebar { width: 42px; }
-  .sidebar-section-title,
-  .folder-item .fi-count,
-  .sidebar-scroll { display: none; }
-  .folder-item { padding: 8px; justify-content: center; }
-  .folder-item .fi-icon { font-size: 18px; }
+/* ── ≤ 640 px : mobile ── */
+@media (max-width: 640px) {
+  /* Header */
+  #header          { padding: 0 8px; min-height: 46px; height: auto; flex-wrap: wrap; gap: 4px; }
+  .logo-text       { display: none; }
+  .logo-icon       { width: 24px; height: 24px; font-size: 11px; border-radius: 6px; }
+  .header-spacer   { display: none; }
+  .nav-label       { display: none; }
+  .nav-btn         { padding: 5px 7px; font-size: 14px; }
+  /* Hide secondary icon buttons */
+  .icon-btn[data-tip="Backup completo"],
+  .icon-btn[data-tip="Restaurar backup"] { display: none; }
 
   /* Library */
-  .library-grid { grid-template-columns: 1fr; padding: 10px; }
-  .library-toolbar { flex-wrap: wrap; padding: 8px 10px; gap: 6px; }
-  .library-toolbar h2 { font-size: 14px; }
+  .library-grid    { grid-template-columns: 1fr; padding: 8px; }
+  .library-toolbar { padding: 8px; flex-wrap: wrap; gap: 6px; }
+  .library-toolbar h2 { font-size: 13px; }
+  .tag-filter      { display: none; } /* too cramped */
 
-  /* Metric grid: 2 columns on phone */
+  /* Modals → bottom sheet */
+  .modal-overlay   { align-items: flex-end; }
+  .modal           { border-radius: 14px 14px 0 0; max-height: 92dvh; max-height: 92vh; }
+  .modal-xl, .modal-lg, .modal-md, .modal-sm { width: 100vw; max-width: 100vw; }
+
+  /* Settings & export */
+  #view-settings   { max-width: 100%; padding: 12px; }
+  .settings-item   { flex-wrap: wrap; gap: 8px; }
+  #view-export     { padding: 12px; }
+  .export-grid     { grid-template-columns: 1fr 1fr; }
+  .import-settings { grid-template-columns: 1fr 1fr; }
+
+  /* Misc */
+  .mi-value        { font-size: 14px; }
+  .rc-metrics      { grid-template-columns: 1fr 1fr; }
+
+  /* Info tooltip: cap width */
+  #infoTooltip     { width: min(256px, 88vw); }
+}
+
+/* ── ≤ 480 px : small phone ── */
+@media (max-width: 480px) {
+  #sidebar { display: none; }
+
+  #header  { padding: 0 6px; }
+  .nav-btn { padding: 4px 6px; font-size: 13px; border-radius: 5px; }
+  .btn-sm  { padding: 3px 8px; font-size: 11px; }
+  .btn     { padding: 5px 10px; font-size: 12px; }
+
   .metric-grid { grid-template-columns: 1fr 1fr; }
+  .mi-value    { font-size: 13px; }
 
-  /* Charts row: single col */
-  .charts-grid, .chart-row { grid-template-columns: 1fr; }
-
-  /* Header actions: collapse */
-  .header-actions .icon-btn[data-tip="Backup completo"],
-  .header-actions .icon-btn[data-tip="Restaurar backup"] { display: none; }
-
-  /* Import modal */
+  .library-toolbar .view-toggle { display: none; }
+  .export-grid     { grid-template-columns: 1fr; }
   .import-settings { grid-template-columns: 1fr; }
 
-  /* Batch filter grid */
-  #batchFilterGroup > div { grid-template-columns: 1fr; }
+  .settings-group  { margin-bottom: 8px; }
+  .settings-item   { padding: 8px 10px; }
+
+  .analyze-left    { max-height: 38vh; }
+  #infoTooltip     { width: min(256px, 94vw); }
 }
 
-/* --- 480px : compact everything --- */
-@media (max-width: 480px) {
-  .nav-btn { padding: 4px 6px; font-size: 14px; }
-  .logo-text { display: none; }
+/* ── ≤ 380 px : very small phone ── */
+@media (max-width: 380px) {
+  #header  { gap: 2px; padding: 0 4px; min-height: 42px; }
+  .nav-btn { padding: 3px 5px; font-size: 12px; }
+  .header-actions .btn { padding: 3px 8px; font-size: 11px; }
 
   .metric-grid { grid-template-columns: 1fr 1fr; }
-  .clean-stats { grid-template-columns: 1fr 1fr 1fr; }
+  .mi-value    { font-size: 12px; }
+  .mi-label    { font-size: 9px; }
 
-  .pt-grid { grid-template-columns: 1fr; }
-  .rc-metrics { grid-template-columns: 1fr 1fr; }
+  .modal-body   { padding: 12px; }
+  .modal-header { padding: 10px 12px; }
+  .modal-footer { padding: 10px 12px; }
+  .modal-title  { font-size: 14px; }
 
-  /* Sticky metric panel headers */
-  .mp-header { position: sticky; top: 0; z-index: 5; background: var(--surface); }
+  .recording-card  { padding: 10px 12px; }
+  .rc-name         { font-size: 13px; }
+  .clean-chart-area { height: 200px; }
+  .clean-tools      { max-height: 220px; }
 
-  .analyze-left { max-height: 35vh; }
+  #batchFilterGroup > div { grid-template-columns: 1fr !important; }
 }
 
-/* --- 360px : absolute minimum --- */
-@media (max-width: 360px) {
-  .metric-grid { grid-template-columns: 1fr; }
-  .header-nav { gap: 0; }
-  .nav-btn { padding: 3px 5px; font-size: 13px; }
-  .btn { padding: 5px 8px; font-size: 11px; }
-}
+/* ── ≤ 320 px : minimum viable (300 px devices) ── */
+@media (max-width: 320px) {
+  /* Logo: icon only, very small */
+  .logo-icon    { width: 20px; height: 20px; font-size: 10px; }
+  .nav-btn      { padding: 3px 4px; font-size: 11px; border-radius: 4px; }
+  .header-actions .btn-primary { padding: 2px 7px; font-size: 10px; }
 
-/* Wide-screen analyze center: cap chart canvas heights for readability */
-@media (min-width: 1400px) {
-  .chart-container { max-height: 280px; }
+  /* Collapse metric grid to single column */
+  .metric-grid  { grid-template-columns: 1fr; }
+  .mi-value     { font-size: 14px; }
+
+  /* Library cards: ultra compact */
+  .library-grid   { padding: 6px; gap: 8px; }
+  .recording-card { padding: 8px 10px; }
+  .rc-metrics     { grid-template-columns: 1fr 1fr; gap: 3px; }
+
+  /* Forms */
+  .form-input, .form-select { font-size: 12px; padding: 5px 8px; }
+  .btn-sm { font-size: 10px; padding: 2px 7px; }
+  .btn    { font-size: 11px; padding: 4px 8px; }
+
+  /* Clean */
+  .clean-tools { grid-template-columns: 1fr !important; max-height: 180px; }
+  .clean-chart-area { height: 170px; }
+
+  /* Modals: full screen */
+  .modal-body   { padding: 10px; }
+  .modal-header { padding: 8px 10px; }
+  .modal-title  { font-size: 13px; }
+  .modal-footer { padding: 8px 10px; gap: 6px; }
+  .modal-footer .btn { flex: 1; justify-content: center; }
 }
