@@ -1980,7 +1980,12 @@ const IO = {
     const tagIds = [];
     for (const tn of tagNames) {
       let tag = state.tags.find(t => t.name.toLowerCase() === tn.toLowerCase());
-      if (!tag) { tag = { id: Date.now() + Math.random(), name: tn, color: '#00C2D4' }; state.tags.push(tag); await DB.put('tags', tag); }
+      if (!tag) {
+        tag = { id: String(Date.now()) + '_' + String(Math.floor(Math.random() * 1e6)),
+                name: tn, color: '#00C2D4', created: Date.now() };
+        state.tags.push(tag);
+        await DB.put('tags', tag);
+      }
       tagIds.push(tag.id);
     }
 
@@ -2300,9 +2305,23 @@ const IO = {
     const { td, fd, nl, comp } = rec;
     const rr   = rec.cleanRR || rec.rrMs;
     const prsa = rr && rr.length >= 120 ? NonStationary.prsa(rr) : null;
-    const ls   = rr && rr.length >= 30  ? LombScargle.compute(rr, state.settings) : null;
-    const wins = rec.windows || [];
-    const MI   = METRIC_INFO;
+    const ls     = rr && rr.length >= 30  ? LombScargle.compute(rr, state.settings) : null;
+    const wins   = rec.windows || [];
+    const MI     = METRIC_INFO;
+    // Precompute per-window PSD for embedded charts
+    const winChartData = wins.filter(w => w.analysis).map(w => {
+      const slice  = rr ? Array.from(rr.slice(w.startBeat, w.endBeat + 1)) : [];
+      const wLs    = slice.length >= 30 ? LombScargle.compute(slice, state.settings) : null;
+      return {
+        label: w.label, color: w.color || '#00C2D4',
+        rr:    slice.slice(0, 600),
+        psdF:  wLs ? wLs.freqs : null,
+        psdP:  wLs ? wLs.psd   : null,
+        vlfMin: state.settings.vlfMin, vlfMax: state.settings.vlfMax,
+        lfMin:  state.settings.lfMin,  lfMax:  state.settings.lfMax,
+        hfMin:  state.settings.hfMin,  hfMax:  state.settings.hfMax
+      };
+    });
     const now     = new Date().toLocaleString('es');
     const recDate = new Date(rec.created).toLocaleString('es');
 
@@ -2339,12 +2358,11 @@ const IO = {
       .sec-title{display:flex;align-items:center;gap:9px;font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#09253f;padding-bottom:8px;margin-bottom:16px;border-bottom:2px solid #d0dae9}
       .sec-title-bar{width:4px;height:15px;background:linear-gradient(180deg,#1558a0,#0d3a5a);border-radius:2px;flex-shrink:0}
       /* PATIENT GRID */
-      .pt-grid{display:grid;grid-template-columns:1fr 1fr;border:1px solid #d8e2f0;border-radius:8px;overflow:hidden}
-      .pt-grid table{width:100%;border-collapse:collapse}
-      .pt-grid th{background:#f1f5fb;padding:8px 14px;font-size:11px;font-weight:600;color:#4a5e78;text-align:left;width:145px;border-bottom:1px solid #d8e2f0;border-right:1px solid #d8e2f0}
-      .pt-grid td{padding:8px 14px;font-size:12px;border-bottom:1px solid #d8e2f0}
-      .pt-grid td.nd{color:#b0baca}
-      .pt-grid tr:last-child th,.pt-grid tr:last-child td{border-bottom:none}
+      .pt-table{width:100%;border-collapse:collapse;border-radius:8px;overflow:hidden}
+      .pt-table th{background:#f1f5fb;padding:8px 14px;font-size:11px;font-weight:600;color:#4a5e78;
+        text-align:left;border:1px solid #d8e2f0;width:21%}
+      .pt-table td{padding:8px 14px;font-size:12px;border:1px solid #d8e2f0;width:29%}
+      .pt-table td.nd{color:#b0baca}
       /* METRICS TABLE */
       .mt{width:100%;border-collapse:collapse;font-size:12px;border:1px solid #d8e2f0;border-radius:8px;overflow:hidden}
       .mt thead tr{background:linear-gradient(90deg,#09253f,#1558a0)}
@@ -2398,23 +2416,35 @@ const IO = {
       
       <div class="sec">
         <div class="sec-title"><span class="sec-title-bar"></span>Información del Sujeto / Protocolo</div>
-        <div class="pt-grid">
-          <table>
-            ${mrow('Paciente / ID', meta.name)}
-            ${mrow('Código de estudio', meta.id)}
-            ${mrow('Fecha de nacimiento', meta.dob)}
-            ${mrow('Sexo biológico', meta.sex)}
-            ${mrow('Edad', meta.age ? meta.age+' años' : null)}
-            ${mrow('Peso / Altura', (meta.weight||meta.height) ? (meta.weight ? meta.weight+' kg':'—')+' / '+(meta.height ? meta.height+' cm':'—') : null)}
-          </table>
-          <table>
-            ${mrow('Condición / Protocolo', meta.condition)}
-            ${mrow('Duración grabación', meta.duration || (td?.totalDuration ? (td.totalDuration/60).toFixed(1)+' min' : null))}
-            ${mrow('Medicamentos relevantes', meta.meds)}
-            ${mrow('Institución / Estudio', meta.institution)}
-            ${meta.notes ? mrow('Notas clínicas', meta.notes) : ''}
-          </table>
-        </div>
+        <table class="pt-table">
+          <tbody>
+            <tr>
+              <th>Paciente / ID</th><td ${!meta.name?'class="nd"':''}>${meta.name||'—'}</td>
+              <th>Código de estudio</th><td ${!meta.id?'class="nd"':''}>${meta.id||'—'}</td>
+            </tr>
+            <tr>
+              <th>Fecha de nacimiento</th><td ${!meta.dob?'class="nd"':''}>${meta.dob||'—'}</td>
+              <th>Sexo biológico</th><td ${!meta.sex?'class="nd"':''}>${meta.sex||'—'}</td>
+            </tr>
+            <tr>
+              <th>Edad</th><td ${!meta.age?'class="nd"':''}>${meta.age ? meta.age+' años' : '—'}</td>
+              <th>Peso / Altura</th>
+              <td ${(!meta.weight&&!meta.height)?'class="nd"':''}>${meta.weight ? meta.weight+' kg' : '—'} / ${meta.height ? meta.height+' cm' : '—'}</td>
+            </tr>
+            <tr>
+              <th>Condición / Protocolo</th><td ${!meta.condition?'class="nd"':''}>${meta.condition||'—'}</td>
+              <th>Duración grabación</th>
+              <td ${(!meta.duration&&!td?.totalDuration)?'class="nd"':''}>${meta.duration || (td?.totalDuration ? (td.totalDuration/60).toFixed(1)+' min' : '—')}</td>
+            </tr>
+            <tr>
+              <th>Medicamentos</th><td colspan="3" ${!meta.meds?'class="nd"':''}>${meta.meds||'—'}</td>
+            </tr>
+            <tr>
+              <th>Institución / Estudio</th><td colspan="3" ${!meta.institution?'class="nd"':''}>${meta.institution||'—'}</td>
+            </tr>
+            ${meta.notes ? `<tr><th>Notas clínicas</th><td colspan="3">${meta.notes}</td></tr>` : ''}
+          </tbody>
+        </table>
       </div>
       
       <div class="sec">
@@ -2445,6 +2475,19 @@ const IO = {
           </div>
         </div>
       </div>
+
+      ${winChartData.length ? `
+      <div class="sec">
+        <div class="sec-title"><span class="sec-title-bar"></span>REPRESENTACIONES GRÁFICAS — VENTANAS DE ANÁLISIS</div>
+        <p style="font-size:11px;color:#6a7d96;margin-bottom:12px">
+          ${winChartData.length} ventana${winChartData.length!==1?'s':''} definida${winChartData.length!==1?'s':''}.
+          Tacograma, diagrama de Poincaré y PSD (Lomb-Scargle) por segmento.
+        </p>
+        <div id="win-charts-container"
+          style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px">
+          <!-- populated by JS after Chart.js loads -->
+        </div>
+      </div>` : ''}
 
       ${td ? `<div class="sec">
         <div class="sec-title"><span class="sec-title-bar"></span>Dominio Temporal</div>
@@ -2551,12 +2594,13 @@ const IO = {
       
       </div>
       <script id="hrv-chart-data" type="application/json">${JSON.stringify({
-        rr:   rr ? Array.from(rr.slice(0, 2000)) : [],
-        psdF: ls ? ls.freqs : null,
-        psdP: ls ? ls.psd   : null,
-        vlfMin: state.settings.vlfMin, vlfMax: state.settings.vlfMax,
-        lfMin:  state.settings.lfMin,  lfMax:  state.settings.lfMax,
-        hfMin:  state.settings.hfMin,  hfMax:  state.settings.hfMax
+        rr:       rr ? Array.from(rr.slice(0, 2000)) : [],
+        psdF:     ls ? ls.freqs : null,
+        psdP:     ls ? ls.psd   : null,
+        vlfMin:   state.settings.vlfMin, vlfMax: state.settings.vlfMax,
+        lfMin:    state.settings.lfMin,  lfMax:  state.settings.lfMax,
+        hfMin:    state.settings.hfMin,  hfMax:  state.settings.hfMax,
+        winData:  winChartData
       })}</script>
       <script>
       (function(){
@@ -2641,6 +2685,107 @@ const IO = {
           ctx.fillStyle=C.t; ctx.font='9px JetBrains Mono,monospace'; ctx.textAlign='center';
           ctx.fillText('RR(n)',W/2,H-3);
           ctx.save(); ctx.translate(10,H/2); ctx.rotate(-1.5708); ctx.fillText('RR(n+1)',0,0); ctx.restore();
+        }
+        // ── Per-window chart rendering ──────────────────────────────────────
+        function buildWinCharts() {
+          var container = document.getElementById('win-charts-container');
+          if (!container || !D.winData || !D.winData.length) return;
+          D.winData.forEach(function(w, wi) {
+            if (!w.rr || !w.rr.length) return;
+            var hasPSD = w.psdF && w.psdF.length;
+            var cols   = hasPSD ? '1fr 1fr 1fr' : '1fr 1fr';
+            var block  = document.createElement('div');
+            block.style.cssText =
+              'border:1px solid #d8e2f0;border-radius:10px;overflow:hidden;break-inside:avoid;background:#fff';
+            block.innerHTML =
+              '<div style="padding:9px 14px;background:linear-gradient(90deg,#09253f,'+ w.color +');' +
+              'color:#fff;display:flex;align-items:center;gap:8px;font-size:12px">' +
+                '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;' +
+                'background:'+w.color+';border:1px solid rgba(255,255,255,.4);flex-shrink:0"></span>' +
+                '<strong>' + w.label + '</strong>' +
+                '<span style="margin-left:auto;font-size:10px;opacity:.65">' + w.rr.length + ' lat.</span>' +
+              '</div>' +
+              '<div style="padding:10px;display:grid;grid-template-columns:' + cols + ';gap:8px">' +
+                '<div><div class="chart-label">TACOGRAMA</div>' +
+                  '<div style="height:90px;position:relative"><canvas id="rwt-'+wi+'"></canvas></div></div>' +
+                '<div><div class="chart-label">POINCARÉ RR(n) vs RR(n+1)</div>' +
+                  '<canvas id="rwp-'+wi+'" style="display:block;width:100%;height:90px"></canvas></div>' +
+                (hasPSD ?
+                  '<div><div class="chart-label">PSD (LOMB-SCARGLE)</div>' +
+                  '<div style="height:90px;position:relative"><canvas id="rwf-'+wi+'"></canvas></div></div>'
+                  : '') +
+              '</div>';
+            container.appendChild(block);
+          });
+          // Render charts after elements exist in DOM
+          requestAnimationFrame(function() {
+            D.winData.forEach(function(w, wi) {
+              if (!w.rr || !w.rr.length) return;
+              try { rWinTacho(wi, w); }    catch(e) {}
+              try { rWinPoincare(wi, w); } catch(e) {}
+              if (w.psdF) try { rWinPSD(wi, w); } catch(e) {}
+            });
+          });
+        }
+        buildWinCharts();
+
+        function rWinTacho(wi, w) {
+          var el = document.getElementById('rwt-' + wi);
+          if (!el || typeof Chart === 'undefined') return;
+          new Chart(el, { type: 'line',
+            data: { labels: w.rr.map(function(_,i){return i+1;}),
+              datasets: [{ data: w.rr, borderColor: w.color || C.a, borderWidth: 1.2,
+                pointRadius: 0, fill: false, tension: 0 }] },
+            options: ax(
+              { title:{display:true,text:'Latido #',color:C.t,font:{size:8}} },
+              { title:{display:true,text:'ms',color:C.t,font:{size:8}} }
+            )
+          });
+        }
+
+        function rWinPoincare(wi, w) {
+          var cv = document.getElementById('rwp-' + wi);
+          if (!cv) return;
+          var W = cv.offsetWidth || 150, H = cv.offsetHeight || 90;
+          cv.width = W; cv.height = H;
+          var ctx2 = cv.getContext('2d'), pad = 16;
+          var mn = Math.min.apply(null, w.rr) * 0.97;
+          var mx = Math.max.apply(null, w.rr) * 1.03;
+          var sX = function(v) { return pad + (v-mn)/(mx-mn)*(W-2*pad); };
+          var sY = function(v) { return H-pad-(v-mn)/(mx-mn)*(H-2*pad); };
+          ctx2.fillStyle = '#f7fafd'; ctx2.fillRect(0,0,W,H);
+          ctx2.strokeStyle = 'rgba(192,120,0,.25)'; ctx2.lineWidth = 0.8;
+          ctx2.setLineDash([3,3]);
+          ctx2.beginPath(); ctx2.moveTo(sX(mn),sY(mn)); ctx2.lineTo(sX(mx),sY(mx)); ctx2.stroke();
+          ctx2.setLineDash([]);
+          ctx2.fillStyle = (w.color || '#1457b8') + '55';
+          for (var i = 0; i < Math.min(w.rr.length-1, 400); i++) {
+            ctx2.beginPath(); ctx2.arc(sX(w.rr[i]), sY(w.rr[i+1]), 1.8, 0, 6.283); ctx2.fill();
+          }
+          ctx2.fillStyle = C.t; ctx2.font = '8px JetBrains Mono,monospace';
+          ctx2.textAlign = 'center'; ctx2.fillText('RR(n)', W/2, H-2);
+        }
+
+        function rWinPSD(wi, w) {
+          var el = document.getElementById('rwf-' + wi);
+          if (!el || typeof Chart === 'undefined') return;
+          var bg = w.psdF.map(function(f) {
+            if (f >= w.vlfMin && f < w.vlfMax) return 'rgba(21,88,160,.55)';
+            if (f >= w.lfMin  && f < w.lfMax)  return 'rgba(192,120,0,.55)';
+            if (f >= w.hfMin  && f < w.hfMax)  return 'rgba(20,87,184,.45)';
+            return 'rgba(100,120,150,.1)';
+          });
+          new Chart(el, { type: 'bar',
+            data: { labels: w.psdF.map(function(f){return f.toFixed(3);}),
+              datasets: [{ data: w.psdP, backgroundColor: bg,
+                borderColor: 'transparent', borderWidth: 0,
+                barPercentage: 1.2, categoryPercentage: 1 }] },
+            options: ax(
+              { title:{display:true,text:'Hz',color:C.t,font:{size:8}},
+                ticks:{color:C.t,font:BF,maxTicksLimit:5} },
+              { title:{display:true,text:'ms²/Hz',color:C.t,font:{size:8}} }
+            )
+          });
         }
       })();
       </script>
@@ -2870,12 +3015,14 @@ const UI = {
   renderSidebarTags() {
     const el = document.getElementById('sidebarTags');
     if (!el) return;
-    el.innerHTML = state.tags.map(t => `
-      <span class="tag-chip ${state.filters.tags.includes(t.id) ? 'active' : ''}"
+    el.innerHTML = state.tags.map(t => {
+      const isActive = state.filters.tags.some(f => String(f) === String(t.id));
+      return `<span class="tag-chip ${isActive ? 'active' : ''}"
         onclick="App.toggleTagFilter('${t.id}')"
-        style="${state.filters.tags.includes(t.id) ? `border-color:${t.color};color:${t.color};background:${t.color}22` : ''}">
+        style="${isActive ? `border-color:${t.color};color:${t.color};background:${t.color}22` : ''}">
         ${t.name}
-      </span>`).join('');
+      </span>`;
+    }).join('');
   },
 
   renderLibrary() {
@@ -2888,7 +3035,12 @@ const UI = {
         (r.metadata?.name || '').toLowerCase().includes(q));
     }
     if (state.filters.folderId) recs = recs.filter(r => r.folderId === state.filters.folderId);
-    if (state.filters.tags.length) recs = recs.filter(r => state.filters.tags.some(t => (r.tagIds || []).includes(t)));
+    if (state.filters.tags.length) {
+      const activeTagStrs = state.filters.tags.map(t => String(t));
+      recs = recs.filter(r =>
+        activeTagStrs.some(tid => (r.tagIds || []).some(rid => String(rid) === tid))
+      );
+    }
 
     // Sort
     const sort = state.filters.sortBy;
@@ -2899,11 +3051,13 @@ const UI = {
 
     // Tag filter bar
     const tfBar = document.getElementById('tagFilterBar');
-    if (tfBar) tfBar.innerHTML = state.tags.slice(0, 6).map(t => `
-      <span class="tag-chip ${state.filters.tags.includes(t.id) ? 'active' : ''}"
+    if (tfBar) tfBar.innerHTML = state.tags.slice(0, 6).map(t => {
+      const isActive = state.filters.tags.some(f => String(f) === String(t.id));
+      return `<span class="tag-chip ${isActive ? 'active' : ''}"
         onclick="App.toggleTagFilter('${t.id}')">
         ${t.name}
-      </span>`).join('');
+      </span>`;
+    }).join('');
 
     if (state.libraryView === 'grid') {
       const grid = document.getElementById('libraryGrid');
@@ -3726,9 +3880,9 @@ const App = {
   },
 
   async loadAll() {
-    await this.loadRecordings();
-    await this.loadFolders();
-    await this.loadTags();
+    await this.loadFolders();    // must precede renderLibrary
+    await this.loadTags();       // must precede renderLibrary (tag filter bar)
+    await this.loadRecordings(); // renderLibrary now has full state.tags + state.folders
     await this.loadSettings();
   },
 
@@ -3816,9 +3970,10 @@ const App = {
   },
 
   toggleTagFilter(tagId) {
-    const idx = state.filters.tags.indexOf(tagId);
+    const tid = String(tagId);
+    const idx = state.filters.tags.findIndex(t => String(t) === tid);
     if (idx >= 0) state.filters.tags.splice(idx, 1);
-    else state.filters.tags.push(tagId);
+    else state.filters.tags.push(tid);
     UI.renderSidebarTags();
     UI.renderLibrary();
   },

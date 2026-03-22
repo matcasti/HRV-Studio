@@ -18,11 +18,11 @@
       <span class="logo-text syne">HRV<span>Studio</span></span>
     </div>
     <nav class="header-nav">
-      <button class="nav-btn active" onclick="App.switchView('library')" data-view="library">📁 Biblioteca</button>
-      <button class="nav-btn" onclick="App.switchView('analyze')" data-view="analyze">📊 Analizar</button>
-      <button class="nav-btn" onclick="App.switchView('clean')" data-view="clean">🧹 Limpiar</button>
-      <button class="nav-btn" onclick="App.switchView('export')" data-view="export">📤 Exportar</button>
-      <button class="nav-btn" onclick="App.switchView('settings')" data-view="settings">⚙️ Ajustes</button>
+      <button class="nav-btn active" onclick="App.switchView('library')" data-view="library">📁<span class="nav-label"> Biblioteca</span></button>
+      <button class="nav-btn" onclick="App.switchView('analyze')" data-view="analyze">📊<span class="nav-label"> Analizar</span></button>
+      <button class="nav-btn" onclick="App.switchView('clean')" data-view="clean">🧹<span class="nav-label"> Limpiar</span></button>
+      <button class="nav-btn" onclick="App.switchView('export')" data-view="export">📤<span class="nav-label"> Exportar</span></button>
+      <button class="nav-btn" onclick="App.switchView('settings')" data-view="settings">⚙️<span class="nav-label"> Ajustes</span></button>
     </nav>
     <div class="header-spacer"></div>
     <div class="header-actions">
@@ -446,6 +446,14 @@
       </div>
     </div>
   </div>
+  <footer id="app-footer" style="text-align:center;padding:4px 20px;font-size:11px;
+    color:var(--text-muted);border-top:1px solid var(--border);background:var(--surface);
+    flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:6px;height:26px">
+    Hecho con <span style="color:var(--error)">❤</span> por
+    <strong style="color:var(--text-dim)">Matías Castillo-Aguilar</strong>
+    <span style="color:var(--border-light)">·</span>
+    HRV Studio v1.0
+  </footer>
 </div>
 
 <!-- GLOBAL DROP OVERLAY -->
@@ -459,16 +467,6 @@
   </div>
   <div style="font-size:13px;color:var(--text-dim)">Formatos soportados: CSV · TXT</div>
 </div>
-
-<!-- FOOTER -->
-<footer style="text-align:center;padding:5px 20px;font-size:11px;color:var(--text-muted);
-  border-top:1px solid var(--border);background:var(--surface);flex-shrink:0;
-  display:flex;align-items:center;justify-content:center;gap:6px">
-  Hecho con <span style="color:var(--error)">❤</span> por
-  <strong style="color:var(--text-dim)">Matías Castillo-Aguilar</strong>
-  <span style="color:var(--border-light)">·</span>
-  HRV Studio v1.0
-</footer>
 
 <!-- IMPORT MODAL -->
 <div class="modal-overlay" id="importModal">

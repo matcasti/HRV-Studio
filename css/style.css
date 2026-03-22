@@ -612,3 +612,130 @@ canvas { max-width: 100%; }
   pointer-events: none;
   animation: fadeIn 0.1s ease;
 }
+
+/* ===== RESPONSIVE LAYOUT ===== */
+
+/* --- 1600px + : expand panels on big screens --- */
+@media (min-width: 1600px) {
+  .analyze-left { width: 360px; }
+  .library-grid { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+  .charts-grid  { grid-template-columns: 1fr 1fr 1fr; }
+}
+@media (min-width: 2200px) {
+  .analyze-left { width: 420px; }
+  .library-grid { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+}
+
+/* --- 1100px : single-col charts --- */
+@media (max-width: 1100px) {
+  .charts-grid { grid-template-columns: 1fr; }
+  .chart-row   { grid-template-columns: 1fr; }
+}
+
+/* --- 900px : already handled by existing rule; extend it --- */
+@media (max-width: 900px) {
+  .analyze-left { width: 260px; }
+  .metric-grid  { grid-template-columns: 1fr 1fr; }
+  .clean-tools  { width: 240px; }
+  .sliding-grid, .prsa-grid { grid-template-columns: 1fr; }
+}
+
+/* --- 768px : stack analyze + clean panels --- */
+@media (max-width: 768px) {
+  #header { padding: 0 10px; gap: 8px; height: auto; min-height: 48px; flex-wrap: wrap; }
+  .header-spacer { display: none; }
+
+  /* Nav: hide text labels, keep emoji */
+  .nav-label { display: none; }
+  .header-nav { gap: 1px; }
+  .nav-btn { padding: 5px 8px; font-size: 15px; }
+
+  /* Stack analyze layout */
+  .analyze-layout { flex-direction: column; }
+  .analyze-left   {
+    width: 100%; max-height: 45vh; overflow-y: auto;
+    border-right: none; border-bottom: 1px solid var(--border);
+  }
+  .analyze-center { min-height: 0; }
+
+  /* Stack clean layout */
+  .clean-layout { flex-direction: column; }
+  .clean-tools  { width: 100%; max-height: 220px; overflow-y: auto; flex-direction: row; flex-wrap: wrap; }
+  .tool-section { min-width: 200px; flex: 1; }
+  .clean-chart-area { height: 260px; }
+
+  /* Modals */
+  .modal-xl { width: 96vw; height: 90vh; }
+  .modal-lg { width: 93vw; }
+  .modal-md { width: 91vw; }
+  .modal-sm { width: 88vw; }
+
+  /* Settings */
+  #view-settings { max-width: 100%; }
+  .settings-item { flex-wrap: wrap; }
+
+  /* Import modal grid */
+  .import-settings { grid-template-columns: 1fr 1fr; }
+}
+
+/* --- 600px : mobile layout --- */
+@media (max-width: 600px) {
+  /* Sidebar: icon-only, smaller */
+  #sidebar { width: 42px; }
+  .sidebar-section-title,
+  .folder-item .fi-count,
+  .sidebar-scroll { display: none; }
+  .folder-item { padding: 8px; justify-content: center; }
+  .folder-item .fi-icon { font-size: 18px; }
+
+  /* Library */
+  .library-grid { grid-template-columns: 1fr; padding: 10px; }
+  .library-toolbar { flex-wrap: wrap; padding: 8px 10px; gap: 6px; }
+  .library-toolbar h2 { font-size: 14px; }
+
+  /* Metric grid: 2 columns on phone */
+  .metric-grid { grid-template-columns: 1fr 1fr; }
+
+  /* Charts row: single col */
+  .charts-grid, .chart-row { grid-template-columns: 1fr; }
+
+  /* Header actions: collapse */
+  .header-actions .icon-btn[data-tip="Backup completo"],
+  .header-actions .icon-btn[data-tip="Restaurar backup"] { display: none; }
+
+  /* Import modal */
+  .import-settings { grid-template-columns: 1fr; }
+
+  /* Batch filter grid */
+  #batchFilterGroup > div { grid-template-columns: 1fr; }
+}
+
+/* --- 480px : compact everything --- */
+@media (max-width: 480px) {
+  .nav-btn { padding: 4px 6px; font-size: 14px; }
+  .logo-text { display: none; }
+
+  .metric-grid { grid-template-columns: 1fr 1fr; }
+  .clean-stats { grid-template-columns: 1fr 1fr 1fr; }
+
+  .pt-grid { grid-template-columns: 1fr; }
+  .rc-metrics { grid-template-columns: 1fr 1fr; }
+
+  /* Sticky metric panel headers */
+  .mp-header { position: sticky; top: 0; z-index: 5; background: var(--surface); }
+
+  .analyze-left { max-height: 35vh; }
+}
+
+/* --- 360px : absolute minimum --- */
+@media (max-width: 360px) {
+  .metric-grid { grid-template-columns: 1fr; }
+  .header-nav { gap: 0; }
+  .nav-btn { padding: 3px 5px; font-size: 13px; }
+  .btn { padding: 5px 8px; font-size: 11px; }
+}
+
+/* Wide-screen analyze center: cap chart canvas heights for readability */
+@media (min-width: 1400px) {
+  .chart-container { max-height: 280px; }
+}
