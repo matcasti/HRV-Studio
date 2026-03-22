@@ -168,6 +168,7 @@
               </div>
               <button class="btn btn-secondary btn-sm btn-full" onclick="Clean.applySDFilter()">Filtrar por SD</button>
             </div>
+            
             <div class="tool-section">
               <div class="tool-section-title">Diferencias sucesivas</div>
               <div class="form-group">
@@ -176,6 +177,49 @@
               </div>
               <button class="btn btn-secondary btn-sm btn-full" onclick="Clean.applyDiffFilter()">Filtrar por diferencia</button>
             </div>
+            
+            <div class="tool-section">
+              <div class="tool-section-title">Filtro Malik (adaptativo)</div>
+              <div class="form-group">
+                <label class="form-label">Umbral relativo (% del RR previo)</label>
+                <div class="range-row">
+                  <input type="range" min="5" max="50" step="5" value="20" id="malikThresh"
+                    oninput="document.getElementById('malikThreshVal').textContent=this.value+'%'">
+                  <span class="range-val" id="malikThreshVal">20%</span>
+                </div>
+              </div>
+              <button class="btn btn-secondary btn-sm btn-full" onclick="Clean.applyMalikFilter()">Filtrar (Malik)</button>
+            </div>
+            
+            <div class="tool-section">
+              <div class="tool-section-title">Filtro Cociente (Karlsson)</div>
+              <div class="form-group">
+                <label class="form-label">Tolerancia ±%</label>
+                <div class="range-row">
+                  <input type="range" min="5" max="50" step="5" value="20" id="quotientThresh"
+                    oninput="document.getElementById('quotientThreshVal').textContent=this.value+'%'">
+                  <span class="range-val" id="quotientThreshVal">20%</span>
+                </div>
+              </div>
+              <button class="btn btn-secondary btn-sm btn-full" onclick="Clean.applyQuotientFilter()">Filtrar (Cociente)</button>
+            </div>
+            
+            <div class="tool-section">
+              <div class="tool-section-title">Detrend (eliminar tendencia)</div>
+              <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">
+                Elimina la deriva lenta de la señal RR preservando los valores medios.
+              </div>
+              <button class="btn btn-secondary btn-sm btn-full" onclick="Clean.detrendLinear()">Detrend lineal</button>
+            </div>
+            <div class="tool-section">
+              <div class="tool-section-title">Suavizado (media móvil)</div>
+              <div class="form-group">
+                <label class="form-label">Semivergencia ±latidos</label>
+                <input type="number" class="form-input" id="smoothWin" value="2" min="1" max="20">
+              </div>
+              <button class="btn btn-secondary btn-sm btn-full" onclick="Clean.applyMovingAvgSmooth()">Aplicar suavizado</button>
+            </div>
+            
             <div class="tool-section">
               <div class="tool-section-title">Interpolación</div>
               <div class="form-group">
@@ -420,6 +464,33 @@
         <input type="file" id="fileInput" accept=".csv,.txt" style="display:none" onchange="IO.handleFile(this.files[0])" multiple>
       </div>
       <div id="importDetected" style="display:none" class="import-detected"></div>
+      <div id="importColSelector" style="display:none;margin-top:12px">
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px">
+          Vista previa — haz clic en un encabezado para seleccionarlo como columna RR:
+        </div>
+        <div id="importColPreview" style="overflow-x:auto;margin-bottom:10px;max-height:160px;
+             border:1px solid var(--border);border-radius:8px;background:var(--card)"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Columna intervalos RR *</label>
+            <select class="form-select" id="importRRCol" onchange="IO._updateImportPreview()"></select>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Columna timestamp/tiempo</label>
+            <select class="form-select" id="importTimeCol">
+              <option value="">Ninguna</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Unidad de la columna RR</label>
+            <select class="form-select" id="importUnit">
+              <option value="auto">Auto-detectar</option>
+              <option value="ms">Milisegundos (ms)</option>
+              <option value="s">Segundos (s)</option>
+            </select>
+          </div>
+        </div>
+      </div>
       <div id="importPreview" class="import-preview" style="display:none">
         <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px">Vista previa (primeros 10 valores):</div>
         <div id="importPreviewData" class="mono" style="font-size:11px;background:var(--card);padding:8px;border-radius:6px;border:1px solid var(--border);color:var(--accent)"></div>
@@ -429,9 +500,9 @@
           <label class="form-label">Nombre de la grabación</label>
           <input type="text" class="form-input" id="importName" placeholder="Ej: Paciente 001 - Reposo">
         </div>
-        <div class="form-group">
-          <label class="form-label">Unidad de los intervalos</label>
-          <select class="form-select" id="importUnit">
+        <div class="form-group" id="importUnitFallback">
+          <label class="form-label">Unidad (texto plano)</label>
+          <select class="form-select" id="importUnitTxt">
             <option value="auto">Auto-detectar</option>
             <option value="ms">Milisegundos (ms)</option>
             <option value="s">Segundos (s)</option>

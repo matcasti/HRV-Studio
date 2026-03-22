@@ -473,39 +473,53 @@ const HRV = {
     };
   },
 
-  composite(td, fd, nl) {
+  composite(td, fd, nl, rrMs = null) {
     if (!td) return null;
     const res = {};
-    // Stress index (Baevsky) — simplified
-    if (td) {
-      const amo = td.n / (td.rrRange || 1) * 100; // approximation
-      res.stressIndex = Math.round((amo / (2 * (td.rrRange || 1) * (td.medianRR / 1000))) * 100) / 100;
+
+    // ── Stress Index (Baevsky) — proper formula ──────────────────────────────
+    // SI = AMo / (2 × MxDMn × Mo)
+    // AMo: % of beats in the modal 50ms class
+    // Mo : center of that class in seconds (mode)
+    // MxDMn: (maxRR − minRR) in seconds (variation range)
+    if (rrMs && rrMs.length > 10) {
+      const SI_BW  = 50; // 50 ms bin width (Baevsky standard)
+      const si_bins = {};
+      for (const r of rrMs) {
+        const b = Math.floor(r / SI_BW) * SI_BW;
+        si_bins[b] = (si_bins[b] || 0) + 1;
+      }
+      const si_top = Object.entries(si_bins).sort(([, a], [, b]) => b - a)[0];
+      if (si_top) {
+        const Mo     = (parseInt(si_top[0]) + SI_BW / 2) / 1000;   // seconds
+        const AMo    = (si_top[1] / rrMs.length) * 100;             // %
+        const MxDMn  = (Math.max(...rrMs) - Math.min(...rrMs)) / 1000; // seconds
+        res.stressIndex = (MxDMn > 0.001 && Mo > 0)
+          ? Math.round(AMo / (2 * MxDMn * Mo) * 100) / 100
+          : null;
+      }
     }
-    // CVI, CSI (Vagal/Sympathetic indices) from SD1/SD2
+
+    // ── Poincaré-based indices (CVI, CSI, GSI) ───────────────────────────────
     if (nl && nl.sd1 > 0 && nl.sd2 > 0) {
       res.cvi = Math.round(Math.log10(4 * Math.PI * nl.sd1 * nl.sd2) * 1000) / 1000;
       res.csi = Math.round((nl.sd2 / nl.sd1) * 100) / 100;
       res.gsi = Math.round(Math.sqrt(nl.sd1 * nl.sd2) * 10) / 10;
     }
-    // Autonomic Balance (LF/HF proxy)
-    if (fd) {
-      res.lfhf = fd.lfhf;
-      res.vagusPower = Math.round(fd.hf / (fd.total || 1) * 100 * 10) / 10;
-      res.symPower = Math.round(fd.lf / (fd.total || 1) * 100 * 10) / 10;
+
+    // ── Spectral autonomic balance ────────────────────────────────────────────
+    if (fd && fd.total > 0) {
+      res.vagusPower = Math.round(fd.hf / fd.total * 100 * 10) / 10;
+      res.symPower   = Math.round(fd.lf  / fd.total * 100 * 10) / 10;
     }
-    // PRSA-like (simplified: mean acceleration and deceleration)
-    if (td) {
-      const accel = [], decel = [];
-      for (let i = 1; i < (state.currentRecording?.cleanRR?.length || 0); i++) {
-        const rr = state.currentRecording.cleanRR;
-        if (rr[i] < rr[i-1]) accel.push(rr[i]);
-        else if (rr[i] > rr[i-1]) decel.push(rr[i]);
-      }
-      if (accel.length > 5 && decel.length > 5) {
-        res.dc = Math.round(MathUtils.mean(decel) * 10) / 10;
-        res.ac = Math.round(MathUtils.mean(accel) * 10) / 10;
-      }
+
+    // ── DC / AC via PRSA (proper Phase-Rectified Signal Averaging) ───────────
+    // Bauer et al. 2006 — requires ≥ 120 beats
+    if (rrMs && rrMs.length >= 120) {
+      const prsa = NonStationary.prsa(rrMs);
+      if (prsa) { res.dc = prsa.DC; res.ac = prsa.AC; }
     }
+
     return res;
   },
 
@@ -594,7 +608,7 @@ const HRV = {
     const td = this.timeDomain(rrMs);
     const fd = this.frequencyDomain(rrMs);
     const nl = this.nonLinear(rrMs);
-    const comp = this.composite(td, fd, nl);
+    const comp = this.composite(td, fd, nl, rrMs);
     return { rrMs, td, fd, nl, comp };
   }
 };
@@ -602,55 +616,90 @@ const HRV = {
 // ===== PARSER =====
 const Parse = {
   detect(text) {
-    const lines = text.trim().split('\n').filter(l => l.trim());
+    const allLines = text.split('\n');
+    // Separate comment metadata from data lines
+    const commentMeta = {};
+    const lines = [];
+    for (const l of allLines) {
+      const t = l.trim();
+      if (!t) continue;
+      if (t.startsWith('#')) {
+        const body = t.slice(1).trim();
+        const ci   = body.indexOf(':');
+        if (ci > 0) commentMeta[body.slice(0, ci).trim()] = body.slice(ci + 1).trim();
+      } else {
+        lines.push(t);
+      }
+    }
     if (!lines.length) return null;
 
-    // Detect CSV with headers
-    const first = lines[0].trim();
-    const hasComma = first.includes(',') || first.includes(';') || first.includes('\t');
+    const first  = lines[0];
+    const hasDelim = first.includes(',') || first.includes(';') || first.includes('\t');
 
-    if (hasComma) {
-      const sep = first.includes('\t') ? '\t' : (first.includes(';') ? ';' : ',');
-      const header = first.toLowerCase().split(sep).map(h => h.trim().replace(/"/g, ''));
-      const isHeader = isNaN(parseFloat(header[0]));
+    if (hasDelim) {
+      const sep  = first.includes('\t') ? '\t' : first.includes(';') ? ';' : ',';
+      const cols = first.split(sep).map(h => h.trim().replace(/^"|"$/g, ''));
+      // Header if ANY cell is non-numeric
+      const isHeader = cols.some(c => isNaN(parseFloat(c)));
 
       if (isHeader) {
-        // Find RR column
-        const rrIdx = header.findIndex(h => h.includes('rr') || h.includes('r-r') || h.includes('nn') || h.includes('ibi') || h.includes('interval'));
-        const timeIdx = header.findIndex(h => h.includes('time') || h.includes('t') || h === 'ms' || h === 's');
-        return { format: 'csv-header', sep, rrIdx: rrIdx >= 0 ? rrIdx : 0, timeIdx, header };
-      } else {
-        return { format: 'csv-noheader', sep };
+        const rrIdx = cols.findIndex(h => {
+          const hl = h.toLowerCase();
+          return hl.includes('rr') || hl.includes('r-r') || hl.includes('nn') ||
+                 hl.includes('ibi') || hl.includes('interval');
+        });
+        const timeIdx = cols.findIndex(h => {
+          const hl = h.toLowerCase();
+          return hl.includes('time') || hl.includes('stamp') ||
+                 hl === 'ms' || hl === 's';
+        });
+        return {
+          format: 'csv-header', sep,
+          rrIdx:   rrIdx   >= 0 ? rrIdx   : 0,
+          timeIdx: timeIdx >= 0 ? timeIdx : -1,
+          header:  cols, commentMeta, lines
+        };
       }
-    } else {
-      return { format: 'txt-plain' };
+      return { format: 'csv-noheader', sep, lines };
     }
+    return { format: 'txt-plain', lines };
   },
 
-  parse(text, detected) {
-    const lines = text.trim().split('\n').filter(l => l.trim());
+  parse(text, detected, rrColIdx = null) {
+    const lines  = detected.lines || text.trim().split('\n')
+                     .filter(l => l.trim() && !l.trim().startsWith('#'));
     const values = [];
+    const useIdx = rrColIdx !== null ? rrColIdx : (detected.rrIdx ?? 0);
 
     if (detected.format === 'csv-header') {
       for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(detected.sep).map(c => c.trim().replace(/"/g, ''));
-        const v = parseFloat(cols[detected.rrIdx]);
+        const cols = lines[i].split(detected.sep).map(c => c.trim().replace(/^"|"$/g, ''));
+        const v    = parseFloat(cols[useIdx]);
         if (!isNaN(v) && v > 0) values.push(v);
       }
     } else if (detected.format === 'csv-noheader') {
       for (const line of lines) {
-        const cols = line.split(detected.sep);
-        // Try last column, then first
-        const candidates = cols.map(c => parseFloat(c.trim())).filter(v => !isNaN(v) && v > 0);
-        if (candidates.length) values.push(candidates[candidates.length - 1]);
+        const cols = line.split(detected.sep)
+                        .map(c => parseFloat(c.trim()))
+                        .filter(v => !isNaN(v) && v > 0);
+        if (cols.length) values.push(cols[Math.min(useIdx, cols.length - 1)]);
       }
     } else {
       for (const line of lines) {
-        const v = parseFloat(line.trim().replace(',', '.'));
+        const v = parseFloat(line.replace(',', '.'));
         if (!isNaN(v) && v > 0) values.push(v);
       }
     }
     return values;
+  },
+
+  /** Returns first nRows data rows as arrays of strings (for column preview). */
+  getPreviewRows(detected, nRows = 6) {
+    if (!detected.lines) return [];
+    const start = detected.format === 'csv-header' ? 1 : 0;
+    return detected.lines
+      .slice(start, start + nRows)
+      .map(l => l.split(detected.sep).map(c => c.trim().replace(/^"|"$/g, '') || '—'));
   }
 };
 
@@ -1184,7 +1233,14 @@ const Clean = {
 
   undoLast() {
     if (!state.cleanHistory.length) { UI.notify('Sin historial para deshacer', 'error'); return; }
-    state.removedBeats = state.cleanHistory.pop();
+    const prev = state.cleanHistory.pop();
+    if (prev instanceof Set) {
+      // Marker-type operation: restore removed-beats set
+      state.removedBeats = prev;
+    } else if (prev?.type === 'values') {
+      // Value-modifying operation (detrend, smooth): restore full rr array
+      if (state.currentRecording) state.currentRecording.cleanRR = prev.rr;
+    }
     this.updateStats(); this.redraw();
   },
 
@@ -1213,29 +1269,182 @@ const Clean = {
     App.switchView('analyze');
   },
 
+  /** Click handler — only activates in 'select' mode; range mode uses mouse drag. */
   handleCleanClick(e) {
     if (state.cleanMode !== 'select') return;
     const canvas = document.getElementById('cleanChart');
     if (!canvas?._chartParams) return;
     const rect = canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-    const { pad, plotW, plotH, n, minV, maxV, rrMs } = canvas._chartParams;
+    const mx = e.clientX - rect.left;
+    const { pad, plotW, n } = canvas._chartParams;
     if (mx < pad.l || mx > canvas.width - pad.r) return;
-    const relX = (mx - pad.l) / plotW;
-    const beatIdx = Math.round(relX * (n - 1));
-    if (beatIdx < 0 || beatIdx >= n) return;
-    // Find nearest visible beat
+    const beatIdx = Math.round((mx - pad.l) / plotW * (n - 1));
     let nearest = beatIdx;
     for (let d = 0; d <= 10; d++) {
       for (const idx of [beatIdx - d, beatIdx + d]) {
         if (idx >= 0 && idx < n && !state.removedBeats.has(idx)) { nearest = idx; break; }
       }
-      if (nearest !== beatIdx || !state.removedBeats.has(beatIdx)) break;
+      if (!state.removedBeats.has(nearest)) break;
     }
     if (state.removedBeats.has(nearest)) state.removedBeats.delete(nearest);
     else state.removedBeats.add(nearest);
     this.updateStats(); this.redraw();
-  }
+  },
+
+  // ── Range-mode drag handlers ─────────────────────────────────────────────
+  _rangeStart: null,
+
+  handleCleanMouseDown(e) {
+    if (state.cleanMode !== 'range') return;
+    const canvas = document.getElementById('cleanChart');
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    this._rangeStart = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    e.preventDefault();
+  },
+
+  handleCleanMouseMove(e) {
+    if (state.cleanMode !== 'range' || !this._rangeStart) return;
+    const canvas = document.getElementById('cleanChart');
+    if (!canvas?._chartParams) return;
+    this.redraw();                                  // repaint clean base first
+    const ctx  = canvas.getContext('2d');
+    const rect = canvas.getBoundingClientRect();
+    const cx = MathUtils.clamp(e.clientX - rect.left, 0, canvas.width);
+    const cy = MathUtils.clamp(e.clientY - rect.top,  0, canvas.height);
+    const x  = Math.min(this._rangeStart.x, cx);
+    const y  = Math.min(this._rangeStart.y, cy);
+    const w  = Math.abs(cx - this._rangeStart.x);
+    const h  = Math.abs(cy - this._rangeStart.y);
+    ctx.fillStyle   = 'rgba(0,194,212,0.10)';
+    ctx.strokeStyle = 'rgba(0,194,212,0.85)';
+    ctx.lineWidth   = 1.5;
+    ctx.setLineDash([5, 3]);
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
+    ctx.setLineDash([]);
+    // Show beat count hint
+    const { pad, plotW, n } = canvas._chartParams;
+    const bMin = Math.round((Math.max(x, pad.l) - pad.l) / plotW * (n - 1));
+    const bMax = Math.round((Math.min(x + w, canvas.width - pad.r) - pad.l) / plotW * (n - 1));
+    const cnt  = Math.max(0, bMax - bMin + 1);
+    ctx.fillStyle = 'rgba(0,194,212,0.95)';
+    ctx.font      = 'bold 10px JetBrains Mono';
+    ctx.fillText(`${cnt} lat.`, x + 4, y > 20 ? y + h - 6 : y + h + 14);
+  },
+
+  handleCleanMouseUp(e) {
+    if (state.cleanMode !== 'range' || !this._rangeStart) return;
+    const canvas = document.getElementById('cleanChart');
+    if (!canvas?._chartParams) { this._rangeStart = null; return; }
+    const rect = canvas.getBoundingClientRect();
+    const x1   = e.clientX - rect.left, y1 = e.clientY - rect.top;
+    const x0   = this._rangeStart.x,    y0 = this._rangeStart.y;
+    this._rangeStart = null;
+
+    const { pad, plotW, plotH, n, minV, maxV, rrMs } = canvas._chartParams;
+    const xMin = Math.max(pad.l, Math.min(x0, x1));
+    const xMax = Math.min(canvas.width - pad.r, Math.max(x0, x1));
+    const yMin = Math.max(pad.t, Math.min(y0, y1));
+    const yMax = Math.min(canvas.height - pad.b, Math.max(y0, y1));
+    const bMin = Math.max(0, Math.round((xMin - pad.l) / plotW * (n - 1)));
+    const bMax = Math.min(n - 1, Math.round((xMax - pad.l) / plotW * (n - 1)));
+    const rrHi = maxV - (yMin - pad.t) / plotH * (maxV - minV);
+    const rrLo = maxV - (yMax - pad.t) / plotH * (maxV - minV);
+
+    if (bMax <= bMin && Math.abs(x1 - x0) < 6) { this.redraw(); return; }
+
+    state.cleanHistory.push(new Set(state.removedBeats));
+    let cnt = 0;
+    for (let i = bMin; i <= bMax; i++) {
+      if (!state.removedBeats.has(i) && rrMs[i] >= rrLo && rrMs[i] <= rrHi) {
+        state.removedBeats.add(i); cnt++;
+      }
+    }
+    this.updateStats(); this.redraw();
+    if (cnt > 0) UI.notify(`${cnt} latidos marcados en rango`, 'success');
+  },
+
+  // ── Additional cleaning tools ────────────────────────────────────────────
+
+  /** Linear detrend: removes slow drift, preserves mean RR. */
+  detrendLinear() {
+    const rec = state.currentRecording;
+    if (!rec?.cleanRR) return;
+    const rr     = rec.cleanRR;
+    const active = rr.map((v, i) => ({ v, i })).filter(({ i }) => !state.removedBeats.has(i));
+    if (active.length < 4) { UI.notify('Muy pocos latidos activos para detrend', 'error'); return; }
+    const xs   = active.map(a => a.i);
+    const ys   = active.map(a => a.v);
+    const { slope, intercept } = MathUtils.linReg(xs, ys);
+    const mean_y = MathUtils.mean(ys);
+    state.cleanHistory.push({ type: 'values', rr: [...rr] });
+    for (let i = 0; i < rr.length; i++) {
+      if (!state.removedBeats.has(i)) rr[i] = rr[i] - (slope * i + intercept) + mean_y;
+    }
+    this.redraw();
+    UI.notify(`Detrend lineal aplicado (pendiente: ${slope.toFixed(3)} ms/latido)`, 'success');
+  },
+
+  /** Malik filter: marks beats where |RRi − RRprev| / RRprev > threshold. */
+  applyMalikFilter() {
+    const rec = state.currentRecording;
+    if (!rec?.cleanRR) return;
+    const thresh = parseFloat(document.getElementById('malikThresh')?.value ?? 20) / 100;
+    state.cleanHistory.push(new Set(state.removedBeats));
+    let cnt = 0;
+    const rr = rec.cleanRR;
+    for (let i = 1; i < rr.length; i++) {
+      if (state.removedBeats.has(i)) continue;
+      let prev = i - 1;
+      while (prev >= 0 && state.removedBeats.has(prev)) prev--;
+      if (prev < 0) continue;
+      if (Math.abs(rr[i] - rr[prev]) / rr[prev] > thresh) { state.removedBeats.add(i); cnt++; }
+    }
+    this.updateStats(); this.redraw();
+    UI.notify(`Filtro Malik (${(thresh * 100).toFixed(0)}%): ${cnt} latidos marcados`, 'success');
+  },
+
+  /** Quotient filter (Karlsson 2001): marks beats where RRi/RRprev ∉ [1−q, 1+q]. */
+  applyQuotientFilter() {
+    const rec = state.currentRecording;
+    if (!rec?.cleanRR) return;
+    const q  = parseFloat(document.getElementById('quotientThresh')?.value ?? 20) / 100;
+    const rr = rec.cleanRR;
+    state.cleanHistory.push(new Set(state.removedBeats));
+    let cnt = 0;
+    for (let i = 1; i < rr.length; i++) {
+      if (state.removedBeats.has(i)) continue;
+      let prev = i - 1;
+      while (prev >= 0 && state.removedBeats.has(prev)) prev--;
+      if (prev < 0) continue;
+      const ratio = rr[i] / rr[prev];
+      if (ratio < (1 - q) || ratio > (1 + q)) { state.removedBeats.add(i); cnt++; }
+    }
+    this.updateStats(); this.redraw();
+    UI.notify(`Filtro cociente (±${(q * 100).toFixed(0)}%): ${cnt} latidos marcados`, 'success');
+  },
+
+  /** Moving-average smoothing: replaces each active beat with local weighted mean. */
+  applyMovingAvgSmooth() {
+    const rec = state.currentRecording;
+    if (!rec?.cleanRR) return;
+    const hw = parseInt(document.getElementById('smoothWin')?.value ?? 2);
+    const rr = rec.cleanRR;
+    state.cleanHistory.push({ type: 'values', rr: [...rr] });
+    const out = [...rr];
+    for (let i = 0; i < rr.length; i++) {
+      if (state.removedBeats.has(i)) continue;
+      const nb = [];
+      for (let k = Math.max(0, i - hw); k <= Math.min(rr.length - 1, i + hw); k++) {
+        if (!state.removedBeats.has(k)) nb.push(rr[k]);
+      }
+      if (nb.length > 1) out[i] = MathUtils.mean(nb);
+    }
+    rec.cleanRR = out;
+    this.redraw();
+    UI.notify(`Suavizado ventana ±${hw} latidos aplicado`, 'success');
+  },
 };
 
 // ===== ANALYSIS WINDOW MANAGER =====
@@ -1293,6 +1502,41 @@ const WindowMgr = {
     }
     this._refresh();
     this.save(); // persist deletion immediately
+  },
+  
+  /** Prompts the user to rename a window; persists if confirmed. */
+  startRename(id, evt) {
+    evt?.stopPropagation();
+    const win = this.getAll().find(w => w.id === id);
+    if (!win) return;
+    // Inline rename via a small inline input inside the chip
+    const labelEl = document.querySelector(`.window-chip[data-wid="${id}"] .window-chip-label`);
+    if (!labelEl) {
+      const newName = prompt('Nuevo nombre de ventana:', win.label);
+      if (newName?.trim()) { win.label = newName.trim(); this._refresh(); this.save(); }
+      return;
+    }
+    const prev = win.label;
+    labelEl.contentEditable = 'true';
+    labelEl.style.background = 'var(--card2)';
+    labelEl.style.borderRadius = '3px';
+    labelEl.style.padding = '0 3px';
+    labelEl.focus();
+    const sel = window.getSelection(); sel.selectAllChildren(labelEl);
+    const finish = () => {
+      labelEl.contentEditable = 'false';
+      labelEl.style.background = '';
+      labelEl.style.padding = '';
+      const newName = labelEl.textContent.trim();
+      if (newName && newName !== prev) {
+        win.label = newName; this._refresh(); this.save();
+        UI.notify(`Ventana renombrada a "${newName}"`, 'success');
+      } else {
+        labelEl.textContent = prev;
+      }
+    };
+    labelEl.onblur = finish;
+    labelEl.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); labelEl.blur(); } };
   },
 
   clearAll() {
@@ -1356,7 +1600,7 @@ const WindowMgr = {
     const td = HRV.timeDomain(slice);
     const fd = HRV.frequencyDomain(slice);
     const nl = HRV.nonLinear(slice);
-    const comp = HRV.composite(td, fd, nl);
+    const comp = HRV.composite(td, fd, nl, slice);
     return { td, fd, nl, comp, beatCount: slice.length, durationMin: MathUtils.sum(slice) / 60000 };
   },
 
@@ -1484,43 +1728,147 @@ const IO = {
 
   async handleFile(file) {
     if (!file) return;
-    const text = await file.text();
+    const text     = await file.text();
     const detected = Parse.detect(text);
     if (!detected) { UI.notify('Formato no reconocido', 'error'); return; }
-    const values = Parse.parse(text, detected);
-    if (!values || values.length < 5) { UI.notify('No se encontraron valores RR válidos', 'error'); return; }
 
-    state.importBuffer = { text, detected, values, filename: file.name };
+    state.importBuffer = { text, detected, values: null, filename: file.name };
 
-    const median = MathUtils.median(values);
-    const unit = median < 5 ? 's' : 'ms';
-    const unitLabel = unit === 's' ? 'segundos' : 'milisegundos';
+    const meta = detected.commentMeta || {};
 
-    document.getElementById('importDetected').style.display = 'block';
-    document.getElementById('importDetected').innerHTML = `✓ Detectado: <strong>${values.length} valores RR</strong> en formato ${detected.format} · Unidad estimada: <strong>${unitLabel}</strong>`;
-    document.getElementById('importPreview').style.display = 'block';
-    document.getElementById('importPreviewData').textContent = values.slice(0, 10).map(v => v.toFixed(unit === 's' ? 4 : 1)).join('  ');
+    // ── Autofill name/tags from embedded metadata ──────────────────────────
+    const nameVal = meta['Filename'] || file.name.replace(/\.(csv|txt)$/i, '');
+    document.getElementById('importName').value = nameVal;
+    if (meta['Tags']) document.getElementById('importTags').value = meta['Tags'];
+
+    // ── CSV with column headers: show column selector ──────────────────────
+    const colSel = document.getElementById('importColSelector');
+    if (detected.format === 'csv-header' && detected.header?.length > 1) {
+      const hdr   = detected.header;
+      const rows  = Parse.getPreviewRows(detected);
+
+      // Build preview table with clickable headers
+      const thStyle = `padding:5px 10px;border:1px solid var(--border);cursor:pointer;
+                       background:var(--card2);font-size:11px;white-space:nowrap;
+                       font-family:'JetBrains Mono',monospace;color:var(--accent)`;
+      const tdStyle = `padding:3px 10px;border:1px solid var(--border);font-size:11px;
+                       font-family:'JetBrains Mono',monospace;color:var(--text-dim)`;
+
+      document.getElementById('importColPreview').innerHTML =
+        `<table style="width:100%;border-collapse:collapse">
+           <thead><tr>${hdr.map((h, i) =>
+             `<th style="${thStyle}" onclick="IO._setRRCol(${i})"
+                  title="Usar columna ${i} como intervalos RR">▼ ${h}</th>`
+           ).join('')}</tr></thead>
+           <tbody>${rows.map(r =>
+             `<tr>${r.map(c => `<td style="${tdStyle}">${c}</td>`).join('')}</tr>`
+           ).join('')}</tbody>
+         </table>`;
+
+      // Populate column selects
+      const optHTML = hdr.map((h, i) => `<option value="${i}">${i}: ${h}</option>`).join('');
+      const rrSel   = document.getElementById('importRRCol');
+      const tsSel   = document.getElementById('importTimeCol');
+      if (rrSel) { rrSel.innerHTML = optHTML; rrSel.value = String(Math.max(0, detected.rrIdx)); }
+      if (tsSel) {
+        tsSel.innerHTML = '<option value="">Ninguna</option>' + optHTML;
+        tsSel.value = detected.timeIdx >= 0 ? String(detected.timeIdx) : '';
+      }
+      // Set unit from column name heuristic
+      const rrColName = (hdr[detected.rrIdx] || '').toLowerCase();
+      const unitSel = document.getElementById('importUnit');
+      if (unitSel) {
+        if (rrColName.includes('(ms)') || rrColName.includes('ms'))       unitSel.value = 'ms';
+        else if (rrColName.includes('(s)') || rrColName.endsWith(' s'))   unitSel.value = 's';
+        else                                                                unitSel.value = 'auto';
+      }
+
+      if (colSel) colSel.style.display = 'block';
+      document.getElementById('importPreview').style.display = 'none';
+      document.getElementById('importUnitFallback').style.display = 'none';
+      document.getElementById('importDetected').style.display  = 'block';
+      document.getElementById('importDetected').innerHTML =
+        `✓ CSV con encabezados detectado · <strong>${hdr.length} columnas</strong> · ` +
+        `<strong>${detected.lines.length - 1} filas</strong> · Haz clic en ▼ para seleccionar columna RR`;
+      this._updateImportPreview();
+
+    } else {
+      // ── Plain text / no-header CSV: simple flow ────────────────────────────
+      const values = Parse.parse(text, detected);
+      if (!values || values.length < 5) { UI.notify('No se encontraron valores RR válidos', 'error'); return; }
+      state.importBuffer.values = values;
+      const unit = MathUtils.median(values) < 5 ? 's' : 'ms';
+      document.getElementById('importDetected').style.display = 'block';
+      document.getElementById('importDetected').innerHTML =
+        `✓ Detectado: <strong>${values.length} valores RR</strong> · ` +
+        `Formato: ${detected.format} · Unidad estimada: <strong>${unit === 's' ? 'segundos' : 'ms'}</strong>`;
+      document.getElementById('importPreview').style.display = 'block';
+      document.getElementById('importPreviewData').textContent =
+        values.slice(0, 10).map(v => v.toFixed(unit === 's' ? 4 : 1)).join('  ');
+      if (colSel)  colSel.style.display = 'none';
+      document.getElementById('importUnitFallback').style.display = '';
+    }
+
     document.getElementById('importSettings').style.display = 'grid';
-    document.getElementById('importName').value = file.name.replace(/\.(csv|txt)$/i, '');
-    document.getElementById('importUnit').value = 'auto';
     document.getElementById('importConfirmBtn').style.display = 'flex';
 
-    // Populate folders
     const sel = document.getElementById('importFolder');
     sel.innerHTML = '<option value="">Sin carpeta</option>';
     for (const f of state.folders) sel.innerHTML += `<option value="${f.id}">${f.name}</option>`;
   },
 
+  /** Called when user clicks a column header in the preview table. */
+  _setRRCol(idx) {
+    const sel = document.getElementById('importRRCol');
+    if (sel) { sel.value = String(idx); this._updateImportPreview(); }
+  },
+
+  /** Parses with the currently selected RR column and updates the simple preview. */
+  _updateImportPreview() {
+    const buf = state.importBuffer;
+    if (!buf?.detected) return;
+    const rrIdx  = parseInt(document.getElementById('importRRCol')?.value ?? '0');
+    const values = Parse.parse(buf.text, buf.detected, rrIdx);
+    buf.values   = values;
+    if (!values.length) return;
+    const unit = MathUtils.median(values) < 5 ? 's' : 'ms';
+    document.getElementById('importPreview').style.display = 'block';
+    document.getElementById('importPreviewData').textContent =
+      values.slice(0, 10).map(v => v.toFixed(unit === 's' ? 4 : 1)).join('  ');
+    const hdrName = buf.detected.header?.[rrIdx] ?? `Col. ${rrIdx}`;
+    document.getElementById('importDetected').innerHTML =
+      `✓ Columna seleccionada: <strong>${hdrName}</strong> · ` +
+      `<strong>${values.length} valores RR válidos</strong> · ` +
+      `Unidad estimada: <strong>${unit === 's' ? 'segundos' : 'ms'}</strong>`;
+  },
+
   async confirmImport() {
     const buf = state.importBuffer;
     if (!buf) return;
+
+    // Resolve values: for CSV-header use the selected column
+    if (buf.detected.format === 'csv-header') {
+      const rrIdx = parseInt(document.getElementById('importRRCol')?.value
+                             ?? buf.detected.rrIdx ?? 0);
+      buf.values  = Parse.parse(buf.text, buf.detected, rrIdx);
+    }
+    // Unit override from selector
+    const unitOverride = document.getElementById('importUnit')?.value
+                      || document.getElementById('importUnitTxt')?.value
+                      || 'auto';
+
     const name = document.getElementById('importName').value || 'Grabación sin nombre';
     const folderId = document.getElementById('importFolder').value || null;
     const tagsRaw = document.getElementById('importTags').value;
     const tagNames = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
 
+    // Apply unit override before normalisation
+    let rawVals = buf.values;
+    if (unitOverride === 's')   rawVals = rawVals.map(v => v * 1000);
+    else if (unitOverride === 'ms') rawVals = rawVals; // already ms
     // Normalize
-    const rrMs = HRV.normalize(buf.values);
+    const rrMs = HRV.normalize(rawVals);
+    
     if (!rrMs || rrMs.length < 5) { UI.notify('Datos insuficientes para análisis', 'error'); return; }
 
     // Compute analysis
@@ -1716,74 +2064,70 @@ const IO = {
   async exportBatch() {
     const format = document.getElementById('batchFormat')?.value || 'csv';
     const recs   = this._getBatchRecordings();
-    if (!recs.length) { UI.notify('Sin grabaciones que coincidan con los filtros', 'error'); return; }
+    if (!recs.length) { UI.notify('Sin grabaciones que coincidan', 'error'); return; }
 
-    if (format === 'csv') {
-      // Resumen: columnas clave, una fila por grabación
-      const headers = [
-        'Nombre','Paciente','Sexo','Edad','Fecha','Condición','Carpeta','Etiquetas',
-        'N_latidos','Duración_min','MeanRR','SDNN','RMSSD','pNN50','pNN20','CV','TriIndex',
-        'FC_media','FC_SD','FC_min','FC_max',
-        'VLF','LF','HF','PotTotal','LF_norm','HF_norm','LF_HF','Pico_LF','Pico_HF',
-        'SD1','SD2','SD1_SD2','SampEn','ApEn','DFA_a1','DFA_a2',
-        'CVI','CSI','GSI','Stress_Index','Vagus_Power','Sym_Power','DC','AC'
-      ];
-      let csv = headers.join(',') + '\n';
-      for (const r of recs) {
-        const meta = r.metadata || {}, td = r.td || {}, fd = r.fd || {}, nl = r.nl || {}, comp = r.comp || {};
-        const folder   = state.folders.find(f => f.id === r.folderId);
-        const tagNames = (r.tagIds || []).map(id => state.tags.find(t => t.id === id)?.name).filter(Boolean).join(';');
-        csv += [
-          r.name, meta.name || '', meta.sex || '', meta.age || '',
-          new Date(r.created).toLocaleDateString('es'), meta.condition || '',
-          folder?.name || '', tagNames,
-          r.rrMs?.length || 0,
-          td.totalDuration ? (td.totalDuration / 60).toFixed(2) : '',
-          td.mean, td.sdnn, td.rmssd, td.pnn50, td.pnn20, td.cv, td.triIndex,
-          td.meanHR, td.sdHR, td.minHR, td.maxHR,
-          fd.vlf, fd.lf, fd.hf, fd.total, fd.lfNorm, fd.hfNorm, fd.lfhf, fd.lfPeakF, fd.hfPeakF,
-          nl.sd1, nl.sd2, nl.sd1sd2, nl.sampen, nl.apen, nl.alpha1, nl.alpha2,
-          comp.cvi, comp.csi, comp.gsi, comp.stressIndex, comp.vagusPower, comp.symPower, comp.dc, comp.ac
-        ].map(v => `"${v ?? ''}"`).join(',') + '\n';
-      }
-      this._download(csv, 'HRVStudio_lote_resumen.csv', 'text/csv');
+    // Shared helper: one row object per recording or per window
+    const makeRow = (r, win = null) => {
+      const meta  = r.metadata || {};
+      const folder= state.folders.find(f => f.id === r.folderId);
+      const tags  = (r.tagIds || []).map(id => state.tags.find(t => t.id === id)?.name).filter(Boolean).join(';');
+      const td    = win ? win.analysis?.td  : r.td  || {};
+      const fd    = win ? win.analysis?.fd  : r.fd  || {};
+      const nl    = win ? win.analysis?.nl  : r.nl  || {};
+      const comp  = win ? win.analysis?.comp: r.comp || {};
+      return {
+        Nombre:        r.name,
+        Ventana:       win ? win.label : '— Completo',
+        Paciente:      meta.name || '',
+        Sexo:          meta.sex  || '',
+        Edad:          meta.age  || '',
+        Fecha:         new Date(r.created).toLocaleDateString('es'),
+        Condicion:     meta.condition || '',
+        Carpeta:       folder?.name  || '',
+        Etiquetas:     tags,
+        N_latidos:     win ? (win.analysis?.beatCount ?? '') : (r.rrMs?.length || ''),
+        Duracion_min:  td?.totalDuration ? (td.totalDuration / 60).toFixed(2) : (win?.analysis?.durationMin?.toFixed(2) ?? ''),
+        MeanRR:        td?.mean,    SDNN:  td?.sdnn,  RMSSD: td?.rmssd,
+        pNN50:         td?.pnn50,   pNN20: td?.pnn20, CV:    td?.cv,
+        TriIndex:      td?.triIndex,FC_media: td?.meanHR,
+        SD_FC:         td?.sdHR,    FC_min: td?.minHR, FC_max: td?.maxHR,
+        SDANN:         td?.sdann,   SDNNi: td?.sdnni,
+        VLF:           fd?.vlf,     LF:    fd?.lf,    HF:    fd?.hf,
+        PotTotal:      fd?.total,   LF_norm: fd?.lfNorm, HF_norm: fd?.hfNorm,
+        LF_HF:         fd?.lfhf,   Pico_LF: fd?.lfPeakF, Pico_HF: fd?.hfPeakF,
+        SD1:           nl?.sd1,    SD2:    nl?.sd2,  SD1_SD2: nl?.sd1sd2,
+        SampEn:        nl?.sampen, ApEn:   nl?.apen, DFA_a1: nl?.alpha1, DFA_a2: nl?.alpha2,
+        CVI:           comp?.cvi,  CSI:    comp?.csi, GSI:    comp?.gsi,
+        Stress_Index:  comp?.stressIndex,
+        Vagus_Power:   comp?.vagusPower,  Sym_Power: comp?.symPower,
+        DC:            comp?.dc,   AC:     comp?.ac
+      };
+    };
 
-    } else if (format === 'csv_full') {
-      // Completo: todas las métricas, igual que exportMetricsCSV pero multi-grabación
-      let headerRow = null;
-      const dataRows = [];
-      for (const r of recs) {
-        const { td, fd, nl, comp } = r;
-        const prsa = r.cleanRR?.length >= 120 ? NonStationary.prsa(r.cleanRR) : null;
-        const meta = r.metadata || {};
-        const row = {
-          Nombre: r.name, Paciente: meta.name || '', Sexo: meta.sex || '', Edad: meta.age || '',
-          Fecha: new Date(r.created).toLocaleDateString('es'), Condicion: meta.condition || '',
-          N_latidos: td?.n, Duracion_min: td?.totalDuration ? (td.totalDuration/60).toFixed(2) : '',
-          MeanRR: td?.mean, MedianaRR: td?.medianRR, MinRR: td?.minRR, MaxRR: td?.maxRR, SDNN: td?.sdnn,
-          RMSSD: td?.rmssd, NN50: td?.nn50, pNN50: td?.pnn50, NN20: td?.nn20, pNN20: td?.pnn20,
-          CV: td?.cv, TriIndex: td?.triIndex, FC_media: td?.meanHR, SD_FC: td?.sdHR,
-          FC_min: td?.minHR, FC_max: td?.maxHR, SDANN: td?.sdann, SDNNi: td?.sdnni,
-          VLF: fd?.vlf, LF: fd?.lf, HF: fd?.hf, Total_Power: fd?.total,
-          LF_norm: fd?.lfNorm, HF_norm: fd?.hfNorm, LF_HF: fd?.lfhf, Pico_LF: fd?.lfPeakF, Pico_HF: fd?.hfPeakF,
-          SD1: nl?.sd1, SD2: nl?.sd2, SD1_SD2: nl?.sd1sd2, SampEn: nl?.sampen, ApEn: nl?.apen,
-          DFA_a1: nl?.alpha1, DFA_a2: nl?.alpha2, CorrDim: nl?.corrDim,
-          CVI: comp?.cvi, CSI: comp?.csi, GSI: comp?.gsi, Stress_Index: comp?.stressIndex,
-          Vagus_Power: comp?.vagusPower, Sym_Power: comp?.symPower,
-          DC: comp?.dc ?? prsa?.DC, AC: comp?.ac ?? prsa?.AC
-        };
-        if (!headerRow) headerRow = Object.keys(row);
-        dataRows.push(Object.values(row).map(v => v ?? ''));
+    // Collect all rows (recording + its windows)
+    const allRows = [];
+    for (const r of recs) {
+      allRows.push(makeRow(r, null));
+      for (const w of (r.windows || [])) {
+        if (w.analysis) allRows.push(makeRow(r, w));
       }
-      const csv = [headerRow, ...dataRows].map(r => r.map(v => `"${v}"`).join(',')).join('\n');
-      this._download(csv, 'HRVStudio_lote_completo.csv', 'text/csv');
+    }
+
+    if (format === 'csv' || format === 'csv_full') {
+      const headers = Object.keys(allRows[0]);
+      const csv = [headers.join(','),
+        ...allRows.map(row =>
+          headers.map(h => `"${row[h] ?? ''}"`).join(','))
+      ].join('\n');
+      const suffix = format === 'csv_full' ? '_completo' : '_resumen';
+      this._download(csv, `HRVStudio_lote${suffix}.csv`, 'text/csv');
 
     } else if (format === 'json') {
       const data = recs.map(r => { const d = { ...r }; delete d.rawData; return d; });
       this._download(JSON.stringify(data, null, 2), 'HRVStudio_lote.json', 'application/json');
     }
 
-    UI.notify(`Lote exportado: ${recs.length} grabación${recs.length !== 1 ? 'es' : ''}`, 'success');
+    UI.notify(`Lote exportado: ${recs.length} grabación${recs.length !== 1 ? 'es' : ''} · ${allRows.length} filas`, 'success');
   },
 
   /** Devuelve las grabaciones que coinciden con los filtros activos en el panel de lote. */
@@ -2533,12 +2877,17 @@ const UI = {
                   const isAct = w.id === activeId;
                   const dur   = w.analysis?.durationMin?.toFixed(1) ?? '?';
                   const beats = w.analysis?.beatCount ?? (w.endBeat - w.startBeat + 1);
-                  return `<div class="window-chip ${isAct ? 'active' : ''}"
+                  return `<div class="window-chip ${isAct ? 'active' : ''}" data-wid="${w.id}"
                       style="${isAct ? `border-color:${w.color};background:${w.color}18` : ''}"
                       onclick="WindowMgr.setActive('${w.id}')">
                     <span class="window-chip-dot" style="background:${w.color}"></span>
-                    <span class="window-chip-label" title="${w.label}">${w.label}</span>
+                    <span class="window-chip-label" title="Doble clic para renombrar"
+                      ondblclick="event.stopPropagation();WindowMgr.startRename('${w.id}')">${w.label}</span>
                     <span class="window-chip-meta">${beats}L·${dur}m</span>
+                    <button class="btn btn-secondary btn-icon-only"
+                      style="width:18px;height:18px;font-size:9px;flex-shrink:0;margin-right:2px"
+                      onclick="event.stopPropagation();WindowMgr.startRename('${w.id}',event)"
+                      title="Renombrar">✏</button>
                     <button class="btn btn-danger btn-icon-only" style="width:18px;height:18px;font-size:9px;flex-shrink:0"
                       onclick="event.stopPropagation();WindowMgr.delete('${w.id}')">✕</button>
                   </div>`;
@@ -2679,26 +3028,62 @@ const UI = {
       });
   
     } else if (tab === 'segments') {
-      const segs = NonStationary.autoSegment(rr, 3);
+      const wins = WindowMgr.getAll();
       const fmt  = MathUtils.fmt;
+
+      // ── Use user-defined windows if they exist; else auto-split into 3 ──
+      let segs;
+      if (wins.length) {
+        segs = wins.map(w => {
+          const seg = rr.slice(w.startBeat, w.endBeat + 1);
+          return {
+            label:       w.label,
+            color:       w.color,
+            start:       w.startBeat,
+            end:         w.endBeat,
+            durationMin: MathUtils.sum(seg) / 60000,
+            td:  w.analysis?.td  || HRV.timeDomain(seg),
+            fd:  w.analysis?.fd  || HRV.frequencyDomain(seg),
+            nl:  w.analysis?.nl  || HRV.nonLinear(seg)
+          };
+        });
+      } else {
+        segs = NonStationary.autoSegment(rr, 3);
+        segs.forEach(s => { s.color = null; });
+      }
+
+      const dotHTML = s => s.color
+        ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${s.color};margin-right:4px;vertical-align:middle"></span>`
+        : '';
+
       el.innerHTML = `
         <div style="padding:10px 14px">
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">División automática en 3 segmentos iguales (ideal para protocolos reposo-ejercicio-reposo)</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">
+            ${wins.length
+              ? `Usando <strong>${wins.length} ventana${wins.length!==1?'s':''}</strong> definidas en el tacograma`
+              : 'División automática en 3 segmentos iguales — define ventanas en el tacograma para segmentos personalizados'}
+          </div>
           <div style="overflow-x:auto">
             <table class="segment-table">
-              <tr><th>Segmento</th><th>Latidos</th><th>Duración</th>
-                  <th>SDNN</th><th>RMSSD</th><th>FC media</th>
-                  <th>LF (ms²)</th><th>HF (ms²)</th><th>LF/HF</th>
-                  <th>SD1</th><th>SD2</th></tr>
+              <tr>
+                <th>Segmento</th><th>Latidos</th><th>Duración</th>
+                <th>SDNN</th><th>RMSSD</th><th>pNN50</th><th>FC media</th>
+                <th>LF (ms²)</th><th>HF (ms²)</th><th>LF/HF</th>
+                <th>SD1</th><th>SD2</th>
+              </tr>
               ${segs.map(s => `<tr>
-                <td class="label">${s.label}</td>
+                <td class="label">${dotHTML(s)}${s.label}</td>
                 <td>${s.end - s.start}</td>
-                <td>${fmt(s.durationMin, 1)} min</td>
-                <td>${fmt(s.td?.sdnn, 1)}</td><td>${fmt(s.td?.rmssd, 1)}</td>
-                <td>${fmt(s.td?.meanHR, 1)}</td>
-                <td>${s.fd?.lf ?? '—'}</td><td>${s.fd?.hf ?? '—'}</td>
-                <td>${fmt(s.fd?.lfhf, 2)}</td>
-                <td>${fmt(s.nl?.sd1, 1)}</td><td>${fmt(s.nl?.sd2, 1)}</td>
+                <td>${fmt(s.durationMin, 2)} min</td>
+                <td>${fmt(s.td?.sdnn,  1)}</td>
+                <td>${fmt(s.td?.rmssd, 1)}</td>
+                <td>${fmt(s.td?.pnn50, 1)}</td>
+                <td>${fmt(s.td?.meanHR,1)}</td>
+                <td>${s.fd?.lf  ?? '—'}</td>
+                <td>${s.fd?.hf  ?? '—'}</td>
+                <td>${fmt(s.fd?.lfhf,  2)}</td>
+                <td>${fmt(s.nl?.sd1,   1)}</td>
+                <td>${fmt(s.nl?.sd2,   1)}</td>
               </tr>`).join('')}
             </table>
           </div>
@@ -3322,8 +3707,20 @@ const App = {
       });
     });
 
-    // Clean chart click handler
-    document.getElementById('cleanChart')?.addEventListener('click', e => Clean.handleCleanClick(e));
+    // Clean chart events — delegated on #content because canvas is re-created on view switch
+    document.getElementById('content').addEventListener('click', e => {
+      if (e.target.id === 'cleanChart') Clean.handleCleanClick(e);
+    });
+    document.getElementById('content').addEventListener('mousedown', e => {
+      if (e.target.id === 'cleanChart') Clean.handleCleanMouseDown(e);
+    });
+    // mousemove / mouseup must be on document to capture drag outside canvas bounds
+    document.addEventListener('mousemove', e => {
+      if (state.cleanMode === 'range' && Clean._rangeStart) Clean.handleCleanMouseMove(e);
+    });
+    document.addEventListener('mouseup', e => {
+      if (state.cleanMode === 'range') Clean.handleCleanMouseUp(e);
+    });
 
     // Keyboard shortcuts
     document.addEventListener('keydown', e => {
