@@ -804,18 +804,36 @@ const Charts = {
   textDim: () => getComputedStyle(document.documentElement).getPropertyValue('--text-dim').trim() || '#7A8FAE',
   border: () => getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#1C2840',
 
+  /** Returns a font size scaled to the current viewport width.
+   *  @param {number} base  – intended size on desktop (≥ 768px)
+   *  @param {number} [min] – floor for very narrow screens (default base-3)
+   */
+  rfs(base, min) {
+    const w = window.innerWidth;
+    if (w >= 768) return base;
+    if (w >= 480) return Math.max(min ?? base - 3, base - 2);
+    if (w >= 380) return Math.max(min ?? base - 3, base - 3);
+    return Math.max(min ?? base - 4, base - 4);
+  },
+
   baseOptions() {
+    const tickSz  = this.rfs(10, 7);
+    const titleSz = this.rfs(12, 9);
+    const bodySz  = this.rfs(11, 8);
     return {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false }, tooltip: { enabled: true,
         backgroundColor: '#0C0F1C', borderColor: '#1C2840', borderWidth: 1,
-        titleColor: '#DCE6F5', bodyColor: '#7A8FAE', padding: 8,
-        titleFont: { family: 'Outfit', size: 12 },
-        bodyFont: { family: 'JetBrains Mono', size: 11 }
+        titleColor: '#DCE6F5', bodyColor: '#7A8FAE', padding: 6,
+        titleFont: { family: 'Outfit', size: titleSz },
+        bodyFont:  { family: 'JetBrains Mono', size: bodySz }
       }},
       scales: {
-        x: { grid: { color: this.border(), lineWidth: 0.5 }, ticks: { color: this.textDim(), font: { family: 'JetBrains Mono', size: 10 } } },
-        y: { grid: { color: this.border(), lineWidth: 0.5 }, ticks: { color: this.textDim(), font: { family: 'JetBrains Mono', size: 10 } } }
+        x: { grid: { color: this.border(), lineWidth: 0.5 },
+          ticks: { color: this.textDim(), font: { family: 'JetBrains Mono', size: tickSz },
+            maxRotation: 0 } },
+        y: { grid: { color: this.border(), lineWidth: 0.5 },
+          ticks: { color: this.textDim(), font: { family: 'JetBrains Mono', size: tickSz } } }
       }
     };
   },
@@ -1182,24 +1200,38 @@ const Charts = {
   renderPRSACurves(prsa) {
     ['prsaDecChart','prsaAccChart'].forEach(id => this.destroyChart(id));
     if (!prsa) return;
-    const L = prsa.L, labels = Array.from({ length: 2 * L }, (_, i) => i - L);
-    [['prsaDecChart', prsa.prsa_d, this.secondary(), 'DC (desaceleración)'],
-     ['prsaAccChart', prsa.prsa_a, this.accent(),    'AC (aceleración)']
+    const L       = prsa.L;
+    const labels  = Array.from({ length: 2 * L }, (_, i) => i - L);
+    const titleSz = this.rfs(11, 8);
+    const axisSz  = this.rfs(9, 7);
+    const base    = this.baseOptions();
+    const compact = window.innerWidth < 480;
+
+    [['prsaDecChart', prsa.prsa_d, this.secondary(), compact ? 'DC' : 'DC (desaceleración)'],
+     ['prsaAccChart', prsa.prsa_a, this.accent(),    compact ? 'AC' : 'AC (aceleración)']
     ].forEach(([id, data, color, title]) => {
       const ctx = this.getCtx(id); if (!ctx) return;
       state.charts[id] = new Chart(ctx, {
         type: 'line',
-        data: { labels, datasets: [{ data, borderColor: color, borderWidth: 1.5, pointRadius: 0, fill: false }] },
+        data: { labels, datasets: [{
+          data, borderColor: color, borderWidth: 1.5, pointRadius: 0, fill: false
+        }]},
         options: {
-          ...this.baseOptions(), animation: false,
-          plugins: { ...this.baseOptions().plugins,
-            title: { display: true, text: title, color: this.textDim(), font: { size: 11 } }},
+          ...base, animation: false,
+          plugins: { ...base.plugins,
+            title: { display: true, text: title,
+              color: this.textDim(), font: { size: titleSz, family: 'Outfit' } }
+          },
           scales: {
-            x: { ...this.baseOptions().scales.x,
-              title: { display: true, text: 'k (latidos desde ancla)', color: this.textDim(), font: { size: 9 } },
-              ticks: { maxTicksLimit: 7, ...this.baseOptions().scales.x.ticks }},
-            y: { ...this.baseOptions().scales.y,
-              title: { display: true, text: 'RR (ms)', color: this.textDim(), font: { size: 9 } }}
+            x: { ...base.scales.x,
+              title: { display: !compact, text: 'k (latidos desde ancla)',
+                color: this.textDim(), font: { size: axisSz } },
+              ticks: { maxTicksLimit: compact ? 5 : 7, ...base.scales.x.ticks }
+            },
+            y: { ...base.scales.y,
+              title: { display: !compact, text: 'RR (ms)',
+                color: this.textDim(), font: { size: axisSz } }
+            }
           }
         }
       });
@@ -1650,30 +1682,39 @@ const WindowMgr = {
     this._refresh();
     const win = this.getActive();
     const rr  = state.currentRecording?.cleanRR || state.currentRecording?.rrMs;
-    if (win?.analysis) {
-      UI.renderWindowMetrics(win);
-      // Update all signal charts with the windowed RR slice
-      if (rr) {
-        const slice = rr.slice(win.startBeat, win.endBeat + 1);
-        requestAnimationFrame(() => {
+
+    const doRender = () => {
+      if (win?.analysis) {
+        UI.renderWindowMetrics(win);
+        if (rr) {
+          const slice = rr.slice(win.startBeat, win.endBeat + 1);
           Charts.renderHistogram(slice);
           Charts.renderDiffHist(slice);
           Charts.renderPSD(null, slice);
           Charts.renderPoincare(slice, win.analysis.td);
-        });
-      }
-    } else {
-      UI.renderAnalysisMetrics(state.currentRecording);
-      if (rr) {
-        requestAnimationFrame(() => {
+        }
+      } else {
+        UI.renderAnalysisMetrics(state.currentRecording);
+        if (rr) {
           Charts.renderHistogram(rr);
           Charts.renderDiffHist(rr);
           Charts.renderPSD(null, rr);
           Charts.renderPoincare(rr, state.currentRecording.td);
-        });
+        }
       }
+      if (rr) Charts.renderInteractiveTachogram(rr, this.getAll(), null);
+    };
+
+    // On mobile, switching to a window should show charts (where the graphs live)
+    // and ensure they are rendered AFTER the panel is visible
+    const isMobile = window.innerWidth <= 768;
+    if (isMobile && state.currentView === 'analyze') {
+      // Switch to charts tab first, then render (avoids 0-size canvas issue)
+      App.switchAnalyzeTab('charts');
+      requestAnimationFrame(doRender);
+    } else {
+      requestAnimationFrame(doRender);
     }
-    if (rr) Charts.renderInteractiveTachogram(rr, this.getAll(), null);
   },
 
   toggleAddMode() {

@@ -159,6 +159,9 @@ body {
 .view { display: none; flex: 1; overflow: hidden; flex-direction: column; }
 .view.active { display: flex; }
 
+/* Settings view: override hidden overflow so inner container can scroll */
+#view-settings.active { overflow-y: auto; }
+
 /* ===== LIBRARY VIEW ===== */
 #view-library { padding: 0; }
 .library-toolbar {
@@ -916,6 +919,32 @@ canvas { max-width: 100%; }
   .mst-btn { font-size: 11px; padding: 8px 3px; }
   .mst-btn .mst-icon { font-size: 14px; }
 
+  /* ── Compact metric panels ── */
+  .metric-item         { padding: 6px 8px !important; }
+  .mi-value            { font-size: 13px !important; line-height: 1.1; }
+  .mi-label            { font-size: 9px; margin-bottom: 1px; }
+  .mi-unit             { font-size: 8px; margin-top: 1px; }
+  .mi-ref              { font-size: 8px; }
+  .metric-grid         { gap: 5px; }
+  .mp-body             { padding: 7px 10px; }
+  .mp-header           { padding: 8px 10px; }
+  .mp-title            { font-size: 11px; }
+  .metric-item.mi-full { padding: 6px 10px !important; }
+  .metric-item.mi-full .mi-value { font-size: 15px !important; }
+
+  /* ── Compact window chips ── */
+  .window-chip       { padding: 4px 6px; }
+  .window-chip-label { font-size: 11px; }
+  .window-chip-meta  { font-size: 9px; }
+
+  /* ── PRSA metric display ── */
+  .prsa-metric .pm-val   { font-size: 16px !important; }
+  .prsa-metric .pm-label { font-size: 9px; }
+
+  /* ── Segment table ── */
+  .segment-table th,
+  .segment-table td { padding: 3px 6px; font-size: 10px; }
+
   /* ── Misc ── */
   .notification { right: 8px; left: 8px; max-width: none; }
   #infoTooltip  { width: min(256px, 88vw); }
@@ -980,6 +1009,13 @@ canvas { max-width: 100%; }
 
   .clean-chart-area { min-height: 200px; }
   .clean-tools      { max-height: 220px; }
+
+  /* Even more compact metrics */
+  .metric-item  { padding: 5px 7px !important; }
+  .mi-value     { font-size: 12px !important; }
+  .mi-label     { font-size: 8px; }
+  .metric-grid  { gap: 4px; }
+  .mp-body      { padding: 5px 8px; }
 
   #infoTooltip { width: min(256px, 94vw); }
 }
