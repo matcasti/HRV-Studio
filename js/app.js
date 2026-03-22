@@ -2526,7 +2526,7 @@ const IO = {
 
       ${winChartData.length ? `
       <div class="sec-divider">
-        <div class="sec-divider-title">§ I — Registro Completo</div>
+        <div class="sec-divider-title">Registro Completo</div>
         <div class="sec-divider-sub">${rr?.length ?? '?'} lat. · ${td?.totalDuration ? (td.totalDuration/60).toFixed(1) : '?'} min · Análisis HRV de la grabación íntegra</div>
       </div>` : ''}
 
@@ -2621,7 +2621,7 @@ const IO = {
 
       ${winChartData.length ? `
       <div id="sec-ii" class="sec-divider">
-        <div class="sec-divider-title">§ II — Análisis por Ventanas</div>
+        <div class="sec-divider-title">Análisis por Ventanas</div>
         <div class="sec-divider-sub">${winChartData.length} ventana${winChartData.length!==1?'s':''} · Tacograma · Poincaré · PSD y estadísticos por segmento</div>
       </div>
       <div id="win-charts-container"></div>` : ''}
