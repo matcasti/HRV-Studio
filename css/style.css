@@ -532,13 +532,6 @@ canvas { max-width: 100%; }
 /* Poincaré canvas */
 #poincareCanvas { border-radius: 8px; }
 
-/* Responsive adjustments */
-@media (max-width: 900px) {
-  #sidebar { width: 48px; }
-  .sidebar-section-title, .folder-item .fi-icon ~ *, .folder-item .fi-count { display: none; }
-  .analyze-left { width: 260px; }
-}
-
 /* ===== ANALYSIS WINDOWS ===== */
 .window-chip {
   display: flex; align-items: center; gap: 6px;
@@ -615,185 +608,328 @@ canvas { max-width: 100%; }
 
 /* ===== RESPONSIVE LAYOUT ===== */
 
-/* ── 2200 px + : ultra-wide ── */
+/* ── Hamburger button (hidden on desktop) ── */
+.mobile-menu-btn {
+  display: none;
+  align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--card);
+  color: var(--text); font-size: 18px; cursor: pointer;
+  flex-shrink: 0; transition: all 0.15s; line-height: 1;
+}
+.mobile-menu-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Sidebar drawer backdrop ── */
+#sidebarOverlay {
+  display: none;
+  position: fixed; inset: 0; z-index: 199;
+  background: rgba(0, 0, 0, 0.52);
+  transition: opacity 0.2s;
+}
+#sidebarOverlay.active { display: block; }
+
+/* ── Utility visibility helpers ── */
+.hide-mobile { /* overridden at ≤640px */ }
+.show-mobile { display: none !important; }
+
+/* ─────────────────────────────────────
+   2200px + : ultra-wide monitors
+───────────────────────────────────── */
 @media (min-width: 2200px) {
   .analyze-left { width: 440px; }
   .clean-tools  { width: 360px; }
   .library-grid { grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); }
   .charts-grid  { grid-template-columns: 1fr 1fr 1fr; }
 }
-/* ── 1600 px – 2199 px ── */
+
+/* ─────────────────────────────────────
+   1600px – 2199px
+───────────────────────────────────── */
 @media (min-width: 1600px) and (max-width: 2199px) {
   .analyze-left { width: 380px; }
   .library-grid { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
   .charts-grid  { grid-template-columns: 1fr 1fr 1fr; }
 }
-/* ── 1400 px + : cap canvas height ── */
-@media (min-width: 1400px) { .chart-container { max-height: 280px; } }
-/* ── ≤ 1200 px ── */
-@media (max-width: 1200px) { .charts-grid { grid-template-columns: 1fr 1fr; } }
-/* ── ≤ 1100 px ── */
+
+/* ─────────────────────────────────────
+   1400px + : cap chart heights
+───────────────────────────────────── */
+@media (min-width: 1400px) {
+  .chart-container { max-height: 280px; }
+}
+
+/* ─────────────────────────────────────
+   ≤ 1200px
+───────────────────────────────────── */
+@media (max-width: 1200px) {
+  .charts-grid { grid-template-columns: 1fr 1fr; }
+}
+
+/* ─────────────────────────────────────
+   ≤ 1100px : single-column charts
+───────────────────────────────────── */
 @media (max-width: 1100px) {
   .charts-grid  { grid-template-columns: 1fr; }
   .chart-row    { grid-template-columns: 1fr; }
   .prsa-grid    { grid-template-columns: 1fr; }
   .sliding-grid { grid-template-columns: 1fr; }
 }
-/* ── ≤ 960 px : narrow panels ── */
+
+/* ─────────────────────────────────────
+   ≤ 960px : narrow inline sidebar
+───────────────────────────────────── */
 @media (max-width: 960px) {
-  .analyze-left { width: 240px; }
-  .clean-tools  { width: 220px; }
+  #sidebar      { width: 200px; }
+  .analyze-left { width: 220px; }
+  .clean-tools  { width: 210px; }
 }
 
-/* ── ≤ 800 px : stack panels, icon sidebar ── */
-@media (max-width: 800px) {
-  /* Sidebar: icon-only strip */
-  #sidebar { width: 44px; }
-  .sidebar-section           { padding: 6px 2px; }
-  .sidebar-section-title     { display: none; }
-  .sidebar-scroll            { display: none; }
-  .search-box                { display: none; }
-  .folder-item               { padding: 7px 0; justify-content: center; }
-  .folder-item span:not(.fi-icon), .folder-item .fi-count { display: none; }
-  .folder-item .fi-icon      { font-size: 17px; }
+/* ═════════════════════════════════════════════════════════
+   ≤ 768px — SIDEBAR BECOMES A SLIDE-IN DRAWER
+   Content area expands to full width automatically
+   because sidebar exits the flex flow (position:fixed)
+═════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  /* Show hamburger button */
+  .mobile-menu-btn { display: flex; }
 
-  /* Analyze: vertical stack */
-  .analyze-layout  { flex-direction: column; }
-  .analyze-left    {
-    width: 100% !important; max-height: 42vh; overflow-y: auto;
-    border-right: none; border-bottom: 1px solid var(--border);
+  /* Sidebar: fixed drawer, initially off-screen left */
+  #sidebar {
+    position: fixed !important;
+    left: -270px;
+    top: 52px;
+    width: 260px !important;
+    height: calc(100dvh - 52px);
+    height: calc(100vh  - 52px);   /* iOS Safari fallback */
+    z-index: 200;
+    overflow-y: auto;
+    box-shadow: none;
+    transition: left 0.26s ease, box-shadow 0.26s ease;
   }
-  .analyze-center  { flex: 1; min-height: 0; overflow-y: auto; }
+  #sidebar.drawer-open {
+    left: 0;
+    box-shadow: 6px 0 28px rgba(0, 0, 0, 0.32);
+  }
 
-  /* Clean: vertical stack */
+  /* Restore all sidebar content when drawer is used */
+  #sidebar .sidebar-section-title    { display: block  !important; }
+  #sidebar .sidebar-scroll           { display: flex   !important; flex-direction: column; flex: 1; }
+  #sidebar .search-box               { display: flex   !important; }
+  #sidebar .folder-item .fi-count    { display: inline-block !important; }
+  #sidebar .folder-item              { justify-content: flex-start !important; padding: 5px 12px !important; }
+  #sidebar .folder-item .fi-icon     { font-size: 14px !important; }
+
+  /* Analyze: stack panels vertically */
+  .analyze-layout { flex-direction: column; }
+  .analyze-left {
+    width: 100% !important;
+    max-height: 44vh;
+    overflow-y: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .analyze-center { overflow-y: auto; }
+
+  /* Clean: stack panels vertically, tools become a scrollable grid */
   .clean-layout { flex-direction: column; }
   .clean-tools  {
-    width: 100% !important; border-right: none;
+    width: 100%  !important;
+    max-height: 280px;
+    overflow-y: auto;
+    border-right: none;
     border-bottom: 1px solid var(--border);
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    max-height: 260px; overflow-y: auto; padding: 4px;
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    align-content: start;
+    padding: 6px;
   }
-  /* Title row spans full width */
   .clean-tools > div:first-child { grid-column: 1 / -1; }
-  .clean-main       { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-  .clean-chart-area { flex: 1; min-height: 220px; }
+  .clean-chart-area { flex: 1; min-height: 240px; }
+
+  /* Modals: still centered but narrower */
+  .modal-xl { width: 95vw; height: 88vh; }
+  .modal-lg { width: 92vw; }
+  .modal-md { width: 90vw; }
+  .modal-sm { width: 86vw; }
 }
 
-/* ── ≤ 640 px : mobile ── */
+/* ═════════════════════════════════════════════════════════
+   ≤ 640px — MOBILE LAYOUT
+   Bottom-sheet modals, scaled fonts, hidden non-essentials
+═════════════════════════════════════════════════════════ */
 @media (max-width: 640px) {
-  /* Header */
-  #header          { padding: 0 8px; min-height: 46px; height: auto; flex-wrap: wrap; gap: 4px; }
-  .logo-text       { display: none; }
-  .logo-icon       { width: 24px; height: 24px; font-size: 11px; border-radius: 6px; }
-  .header-spacer   { display: none; }
-  .nav-label       { display: none; }
-  .nav-btn         { padding: 5px 7px; font-size: 14px; }
-  /* Hide secondary icon buttons */
+  body      { font-size: 13px; }
+  .mi-value { font-size: 14px !important; }
+  .mi-label { font-size: 9px; }
+  .badge    { font-size: 10px; }
+
+  /* ── Header: compact single row ── */
+  #header      { padding: 0 8px; min-height: 48px; height: auto; flex-wrap: wrap; gap: 4px; }
+  .logo-text   { display: none; }
+  .logo-icon   { width: 26px; height: 26px; font-size: 12px; border-radius: 6px; }
+  .header-spacer { display: none; }
+  .nav-label   { display: none; }
+  .nav-btn     { padding: 5px 7px; font-size: 14px; }
   .icon-btn[data-tip="Backup completo"],
   .icon-btn[data-tip="Restaurar backup"] { display: none; }
+  .icon-btn[data-tip="Modo claro/oscuro"]{ width: 28px; height: 28px; }
 
-  /* Library */
-  .library-grid    { grid-template-columns: 1fr; padding: 8px; }
-  .library-toolbar { padding: 8px; flex-wrap: wrap; gap: 6px; }
+  /* ── Library ── */
+  .library-grid     { grid-template-columns: 1fr; padding: 8px; gap: 8px; }
+  .library-toolbar  { padding: 8px 10px; flex-wrap: wrap; gap: 6px; }
   .library-toolbar h2 { font-size: 13px; }
-  .tag-filter      { display: none; } /* too cramped */
+  .tag-filter       { display: none; }    /* tag filter lives in sidebar drawer */
+  .view-toggle      { display: none; }
+  .rc-actions       { opacity: 1; }       /* always visible (no hover on touch) */
 
-  /* Modals → bottom sheet */
-  .modal-overlay   { align-items: flex-end; }
-  .modal           { border-radius: 14px 14px 0 0; max-height: 92dvh; max-height: 92vh; }
-  .modal-xl, .modal-lg, .modal-md, .modal-sm { width: 100vw; max-width: 100vw; }
+  /* ── Utility classes activated ── */
+  .hide-mobile  { display: none !important; }
+  .show-mobile  { display: revert !important; }
 
-  /* Settings & export */
-  #view-settings   { max-width: 100%; padding: 12px; }
-  .settings-item   { flex-wrap: wrap; gap: 8px; }
-  #view-export     { padding: 12px; }
-  .export-grid     { grid-template-columns: 1fr 1fr; }
+  /* ── Modals → bottom sheet ── */
+  .modal-overlay { align-items: flex-end; }
+  .modal {
+    border-radius: 16px 16px 0 0 !important;
+    max-height: 92dvh;
+    max-height: 92vh;   /* fallback */
+  }
+  .modal-xl, .modal-lg, .modal-md, .modal-sm {
+    width: 100vw !important;
+    max-width: 100vw;
+  }
+
+  /* ── Import ── */
   .import-settings { grid-template-columns: 1fr 1fr; }
 
-  /* Misc */
-  .mi-value        { font-size: 14px; }
-  .rc-metrics      { grid-template-columns: 1fr 1fr; }
+  /* ── Export ── */
+  #view-export  { padding: 12px; }
+  .export-grid  { grid-template-columns: 1fr 1fr; }
 
-  /* Info tooltip: cap width */
-  #infoTooltip     { width: min(256px, 88vw); }
+  /* ── Settings ── */
+  #view-settings { max-width: 100%; padding: 12px; }
+  .settings-item { flex-wrap: wrap; gap: 6px; }
+
+  /* ── Analyze ── */
+  .analyze-left  { max-height: 40vh; }
+  .analyze-header { flex-wrap: wrap; gap: 6px; padding: 8px 10px; }
+  #analyzeHeaderActions        { flex-wrap: wrap; gap: 4px; }
+  #analyzeHeaderActions .btn   { font-size: 11px; padding: 3px 8px; }
+  .ah-title  { font-size: 13px; }
+  .ah-sub    { font-size: 10px; }
+
+  /* ── Charts ── */
+  .charts-grid { grid-template-columns: 1fr; }
+  .chart-row   { grid-template-columns: 1fr; }
+
+  /* ── Misc ── */
+  .notification { right: 8px; left: 8px; max-width: none; }
+  #infoTooltip  { width: min(256px, 88vw); }
+  #batchFilterGroup > div { grid-template-columns: 1fr 1fr !important; }
 }
 
-/* ── ≤ 480 px : small phone ── */
+/* ═════════════════════════════════════════════════════════
+   ≤ 480px — SMALL PHONE
+═════════════════════════════════════════════════════════ */
 @media (max-width: 480px) {
-  #sidebar { display: none; }
+  body      { font-size: 12px; }
+  .mi-value { font-size: 13px !important; }
+  .mi-label { font-size: 9px; }
 
-  #header  { padding: 0 6px; }
-  .nav-btn { padding: 4px 6px; font-size: 13px; border-radius: 5px; }
-  .btn-sm  { padding: 3px 8px; font-size: 11px; }
-  .btn     { padding: 5px 10px; font-size: 12px; }
+  .mobile-menu-btn         { width: 30px; height: 30px; font-size: 16px; }
+  .nav-btn                 { padding: 4px 6px; font-size: 13px; }
+  .btn-sm                  { padding: 3px 8px; font-size: 11px; }
+  .btn                     { padding: 5px 10px; font-size: 12px; }
+  .header-actions .btn     { padding: 3px 8px; font-size: 11px; }
 
-  .metric-grid { grid-template-columns: 1fr 1fr; }
-  .mi-value    { font-size: 13px; }
+  .metric-grid  { grid-template-columns: 1fr 1fr; }
+  .metric-item  { padding: 7px 8px; }
+  .analyze-left { max-height: 36vh; }
 
-  .library-toolbar .view-toggle { display: none; }
   .export-grid     { grid-template-columns: 1fr; }
   .import-settings { grid-template-columns: 1fr; }
 
-  .settings-group  { margin-bottom: 8px; }
-  .settings-item   { padding: 8px 10px; }
-
-  .analyze-left    { max-height: 38vh; }
-  #infoTooltip     { width: min(256px, 94vw); }
-}
-
-/* ── ≤ 380 px : very small phone ── */
-@media (max-width: 380px) {
-  #header  { gap: 2px; padding: 0 4px; min-height: 42px; }
-  .nav-btn { padding: 3px 5px; font-size: 12px; }
-  .header-actions .btn { padding: 3px 8px; font-size: 11px; }
-
-  .metric-grid { grid-template-columns: 1fr 1fr; }
-  .mi-value    { font-size: 12px; }
-  .mi-label    { font-size: 9px; }
-
-  .modal-body   { padding: 12px; }
-  .modal-header { padding: 10px 12px; }
-  .modal-footer { padding: 10px 12px; }
-  .modal-title  { font-size: 14px; }
-
-  .recording-card  { padding: 10px 12px; }
-  .rc-name         { font-size: 13px; }
-  .clean-chart-area { height: 200px; }
-  .clean-tools      { max-height: 220px; }
+  .settings-group { margin-bottom: 8px; }
+  .settings-item  { padding: 8px 10px; }
 
   #batchFilterGroup > div { grid-template-columns: 1fr !important; }
+  #infoTooltip { width: min(256px, 92vw); }
 }
 
-/* ── ≤ 320 px : minimum viable (300 px devices) ── */
+/* ═════════════════════════════════════════════════════════
+   ≤ 380px — VERY SMALL PHONE
+═════════════════════════════════════════════════════════ */
+@media (max-width: 380px) {
+  body     { font-size: 12px; }
+
+  #header  { gap: 3px; padding: 0 6px; min-height: 44px; }
+  .logo-icon       { width: 22px; height: 22px; font-size: 10px; }
+  .mobile-menu-btn { width: 28px; height: 28px; font-size: 14px; border-radius: 6px; }
+  .nav-btn { padding: 3px 5px; font-size: 12px; }
+  .header-actions .btn { padding: 2px 8px; font-size: 10px; }
+
+  /* Adjust sidebar top to match smaller header */
+  #sidebar { top: 44px; height: calc(100dvh - 44px); height: calc(100vh - 44px); }
+
+  .mi-value    { font-size: 12px !important; }
+  .metric-grid { grid-template-columns: 1fr 1fr; }
+  .metric-item { padding: 6px 8px; }
+
+  .modal-body   { padding: 10px 12px; }
+  .modal-header { padding: 10px 12px; }
+  .modal-footer { padding: 10px 12px; gap: 6px; }
+  .modal-footer .btn { flex: 1; justify-content: center; }
+  .modal-title  { font-size: 14px; }
+
+  .recording-card { padding: 10px 12px; }
+  .rc-name        { font-size: 12px; }
+
+  .clean-chart-area { min-height: 200px; }
+  .clean-tools      { max-height: 220px; }
+
+  #infoTooltip { width: min(256px, 94vw); }
+}
+
+/* ═════════════════════════════════════════════════════════
+   ≤ 320px — MINIMUM (300px DEVICES)
+═════════════════════════════════════════════════════════ */
 @media (max-width: 320px) {
-  /* Logo: icon only, very small */
-  .logo-icon    { width: 20px; height: 20px; font-size: 10px; }
-  .nav-btn      { padding: 3px 4px; font-size: 11px; border-radius: 4px; }
+  body   { font-size: 11px; }
+
+  #header { gap: 2px; padding: 0 4px; min-height: 42px; }
+  .logo-icon       { width: 20px; height: 20px; font-size: 10px; }
+  .mobile-menu-btn { width: 26px; height: 26px; font-size: 12px; border-radius: 5px; }
+  .nav-btn         { padding: 3px 4px; font-size: 11px; border-radius: 4px; }
   .header-actions .btn-primary { padding: 2px 7px; font-size: 10px; }
 
-  /* Collapse metric grid to single column */
-  .metric-grid  { grid-template-columns: 1fr; }
-  .mi-value     { font-size: 14px; }
+  /* Sidebar: near full-width when open */
+  #sidebar             { width: calc(100vw - 16px) !important; left: -100vw; }
+  #sidebar.drawer-open { left: 0; }
+  #sidebar             { top: 42px; height: calc(100dvh - 42px); height: calc(100vh - 42px); }
 
-  /* Library cards: ultra compact */
-  .library-grid   { padding: 6px; gap: 8px; }
+  /* Single-column metric grid */
+  .metric-grid  { grid-template-columns: 1fr; }
+  .mi-value     { font-size: 13px !important; }
+  .mi-label     { font-size: 8px; }
+  .mi-unit      { font-size: 8px; }
+
+  .library-grid   { padding: 5px; gap: 6px; }
   .recording-card { padding: 8px 10px; }
   .rc-metrics     { grid-template-columns: 1fr 1fr; gap: 3px; }
+  .rc-name        { font-size: 11px; }
 
-  /* Forms */
-  .form-input, .form-select { font-size: 12px; padding: 5px 8px; }
-  .btn-sm { font-size: 10px; padding: 2px 7px; }
-  .btn    { font-size: 11px; padding: 4px 8px; }
+  .form-input, .form-select { font-size: 11px; padding: 5px 8px; }
+  .btn-sm  { font-size: 10px; padding: 2px 7px; }
+  .btn     { font-size: 11px; padding: 4px 8px; }
 
-  /* Clean */
-  .clean-tools { grid-template-columns: 1fr !important; max-height: 180px; }
-  .clean-chart-area { height: 170px; }
+  .clean-tools      { max-height: 160px; }
+  .clean-chart-area { min-height: 160px; }
 
-  /* Modals: full screen */
-  .modal-body   { padding: 10px; }
+  .modal-body   { padding: 8px 10px; }
   .modal-header { padding: 8px 10px; }
-  .modal-title  { font-size: 13px; }
-  .modal-footer { padding: 8px 10px; gap: 6px; }
-  .modal-footer .btn { flex: 1; justify-content: center; }
+  .modal-footer { padding: 8px 10px; gap: 4px; }
+  .modal-footer .btn { flex: 1; font-size: 10px; justify-content: center; }
+  .modal-title  { font-size: 12px; }
+
+  .si-sub { display: none; }  /* hide settings subtitles */
+  #infoTooltip { width: 94vw; }
 }

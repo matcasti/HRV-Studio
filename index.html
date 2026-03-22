@@ -13,6 +13,8 @@
 <div id="app">
   <!-- HEADER -->
   <header id="header">
+    <button class="mobile-menu-btn" id="hamburger"
+      onclick="App.toggleSidebar()" aria-label="Menú lateral" title="Menú lateral">☰</button>
     <div class="logo" onclick="App.goHome()">
       <div class="logo-icon">♥</div>
       <span class="logo-text syne">HRV<span>Studio</span></span>
@@ -75,7 +77,7 @@
             <button class="vt-btn active" id="gridViewBtn" onclick="App.setLibraryView('grid')">⊞</button>
             <button class="vt-btn" id="listViewBtn" onclick="App.setLibraryView('list')">≡</button>
           </div>
-          <select class="form-select" style="width:auto;font-size:12px" onchange="App.sortRecordings(this.value)">
+          <select class="form-select hide-mobile" style="width:auto;font-size:12px" onchange="App.sortRecordings(this.value)">
             <option value="date-desc">Más recientes</option>
             <option value="date-asc">Más antiguos</option>
             <option value="name-asc">Nombre A-Z</option>
@@ -467,6 +469,9 @@
   </div>
   <div style="font-size:13px;color:var(--text-dim)">Formatos soportados: CSV · TXT</div>
 </div>
+
+<!-- SIDEBAR DRAWER OVERLAY -->
+<div id="sidebarOverlay" onclick="App.closeSidebar()"></div>
 
 <!-- IMPORT MODAL -->
 <div class="modal-overlay" id="importModal">

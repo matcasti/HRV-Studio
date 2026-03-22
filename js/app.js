@@ -4096,6 +4096,9 @@ const App = {
     document.getElementById(`view-${view}`)?.classList.add('active');
     document.querySelector(`.nav-btn[data-view="${view}"]`)?.classList.add('active');
 
+    // Close sidebar drawer on mobile when navigating
+    if (window.innerWidth <= 768) this.closeSidebar();
+    
     if (view === 'clean') {
       Clean.init();
     }
@@ -4252,6 +4255,28 @@ const App = {
     }
     UI.closeModal('welcomeModal');
   },
+  
+  toggleSidebar() {
+    const sb  = document.getElementById('sidebar');
+    const ov  = document.getElementById('sidebarOverlay');
+    const btn = document.getElementById('hamburger');
+    if (!sb) return;
+    const isOpen = sb.classList.contains('drawer-open');
+    sb.classList.toggle('drawer-open', !isOpen);
+    if (ov)  ov.classList.toggle('active', !isOpen);
+    if (btn) btn.textContent = isOpen ? '☰' : '✕';
+    if (btn) btn.setAttribute('aria-expanded', String(!isOpen));
+  },
+
+  closeSidebar() {
+    const sb  = document.getElementById('sidebar');
+    const ov  = document.getElementById('sidebarOverlay');
+    const btn = document.getElementById('hamburger');
+    if (!sb) return;
+    sb.classList.remove('drawer-open');
+    if (ov)  ov.classList.remove('active');
+    if (btn) { btn.textContent = '☰'; btn.setAttribute('aria-expanded', 'false'); }
+  },
 
   bindEvents() {
     // Close modals on overlay click
@@ -4308,6 +4333,8 @@ const App = {
     // Window resize - redraw charts
     let resizeTimer;
     window.addEventListener('resize', () => {
+      // Auto-close drawer when resizing to desktop width
+      if (window.innerWidth > 768) this.closeSidebar();
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
         if (state.currentView === 'clean') Clean.redraw();
