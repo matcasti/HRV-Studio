@@ -111,6 +111,16 @@
             <button class="btn btn-primary btn-sm" onclick="UI.openReportModal()">📄 Generar reporte</button>
           </div>
         </div>
+        <!-- Mobile-only tab bar: Métricas / Gráficos -->
+        <div class="mobile-section-tabs" id="analyzeTabBar">
+          <button class="mst-btn active" data-tab="metrics" onclick="App.switchAnalyzeTab('metrics')">
+            <span class="mst-icon">📊</span>Estadísticos
+          </button>
+          <button class="mst-btn" data-tab="charts" onclick="App.switchAnalyzeTab('charts')">
+            <span class="mst-icon">📈</span>Gráficos
+          </button>
+        </div>
+
         <div class="analyze-layout" id="analyzeLayout">
           <div class="analyze-left" id="analyzeLeft">
             <div id="windowsPanelContainer"></div>
@@ -136,6 +146,17 @@
 
       <!-- CLEAN VIEW -->
       <div class="view" id="view-clean">
+
+        <!-- Mobile-only tab bar: Herramientas / Gráfico -->
+        <div class="mobile-section-tabs" id="cleanTabBar">
+          <button class="mst-btn active" data-tab="tools" onclick="App.switchCleanTab('tools')">
+            <span class="mst-icon">🧹</span>Herramientas
+          </button>
+          <button class="mst-btn" data-tab="chart" onclick="App.switchCleanTab('chart')">
+            <span class="mst-icon">📉</span>Gráfico RR
+          </button>
+        </div>
+
         <div class="clean-layout">
           <div class="clean-tools">
             <div style="padding:12px 14px;border-bottom:1px solid var(--border);font-family:'Syne',sans-serif;font-weight:700;font-size:14px">Herramientas de limpieza</div>

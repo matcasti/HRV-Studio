@@ -4098,12 +4098,23 @@ const App = {
 
     // Close sidebar drawer on mobile when navigating
     if (window.innerWidth <= 768) this.closeSidebar();
-    
+
     if (view === 'clean') {
       Clean.init();
+      // Apply last-used mobile tab (default: tools so chart renders after user taps)
+      if (window.innerWidth <= 768) {
+        this.switchCleanTab(state.mobileCleanTab || 'tools');
+      }
     }
-    if (view === 'analyze' && state.currentRecording) {
-      requestAnimationFrame(() => UI.renderAnalysis(state.currentRecording));
+
+    if (view === 'analyze') {
+      if (state.currentRecording) {
+        requestAnimationFrame(() => UI.renderAnalysis(state.currentRecording));
+      }
+      // Apply last-used mobile tab (default: metrics)
+      if (window.innerWidth <= 768) {
+        this.switchAnalyzeTab(state.mobileAnalyzeTab || 'metrics');
+      }
     }
     if (view === 'export') {
       const rec = state.currentRecording;
@@ -4249,6 +4260,58 @@ const App = {
     UI.notify('Todos los datos eliminados', 'success');
   },
   
+  /**
+   * Switch the mobile tab on the Analyze view.
+   * @param {'metrics'|'charts'} tab
+   */
+  switchAnalyzeTab(tab) {
+    state.mobileAnalyzeTab = tab;
+    const view = document.getElementById('view-analyze');
+    if (!view) return;
+
+    view.classList.remove('tab-metrics', 'tab-charts');
+    view.classList.add('tab-' + tab);
+
+    document.querySelectorAll('#analyzeTabBar .mst-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.tab === tab)
+    );
+
+    // Charts rendered into a hidden container have 0-size; re-render when revealed
+    if (tab === 'charts' && state.currentRecording) {
+      const rr = state.currentRecording.cleanRR || state.currentRecording.rrMs;
+      if (rr) requestAnimationFrame(() => {
+        Charts.renderInteractiveTachogram(rr, WindowMgr.getAll(), null);
+        Charts.renderHistogram(rr);
+        Charts.renderDiffHist(rr);
+        Charts.renderPSD(null, rr);
+        Charts.renderPoincare(rr, state.currentRecording.td);
+        App._bindTachogramEvents(rr);
+        // Also refresh the currently-active dynamic tab
+        UI._renderDynamicTab(state.dynamicTab);
+      });
+    }
+  },
+
+  /**
+   * Switch the mobile tab on the Clean view.
+   * @param {'tools'|'chart'} tab
+   */
+  switchCleanTab(tab) {
+    state.mobileCleanTab = tab;
+    const view = document.getElementById('view-clean');
+    if (!view) return;
+
+    view.classList.remove('tab-tools', 'tab-chart');
+    view.classList.add('tab-' + tab);
+
+    document.querySelectorAll('#cleanTabBar .mst-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.tab === tab)
+    );
+
+    // Re-draw when chart tab becomes visible (canvas was hidden during init)
+    if (tab === 'chart') requestAnimationFrame(() => Clean.redraw());
+  },
+  
   closeWelcome() {
     if (document.getElementById('welcomeDontShow')?.checked) {
       try { localStorage.setItem('hrv_welcomed', '1'); } catch {}
@@ -4335,6 +4398,13 @@ const App = {
     window.addEventListener('resize', () => {
       // Auto-close drawer when resizing to desktop width
       if (window.innerWidth > 768) this.closeSidebar();
+
+      // Remove tab classes when switching to desktop (harmless but tidy)
+      if (window.innerWidth > 768) {
+        document.getElementById('view-analyze')?.classList.remove('tab-metrics', 'tab-charts');
+        document.getElementById('view-clean')?.classList.remove('tab-tools', 'tab-chart');
+      }
+
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
         if (state.currentView === 'clean') Clean.redraw();
