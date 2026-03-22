@@ -146,7 +146,7 @@
               </div>
             </div>
             <div class="tool-section">
-              <div class="tool-section-title">Filtro por umbral</div>
+              <div class="tool-section-title">Filtro por umbral <span class="mi-info" data-clean="threshold">i</span></div>
               <div class="form-group">
                 <label class="form-label">Mínimo (ms)</label>
                 <input type="number" class="form-input" id="threshMin" value="300" placeholder="300">
@@ -158,7 +158,7 @@
               <button class="btn btn-secondary btn-sm btn-full" onclick="Clean.applyThreshold()">Aplicar umbral</button>
             </div>
             <div class="tool-section">
-              <div class="tool-section-title">Filtro estadístico</div>
+              <div class="tool-section-title">Filtro estadístico <span class="mi-info" data-clean="sdFilter">i</span></div>
               <div class="form-group">
                 <label class="form-label">Desviaciones estándar</label>
                 <div class="range-row">
@@ -170,7 +170,7 @@
             </div>
             
             <div class="tool-section">
-              <div class="tool-section-title">Diferencias sucesivas</div>
+              <div class="tool-section-title">Diferencias sucesivas <span class="mi-info" data-clean="diffFilter">i</span></div>
               <div class="form-group">
                 <label class="form-label">Umbral de diferencia (ms)</label>
                 <input type="number" class="form-input" id="diffThresh" value="200" placeholder="200">
@@ -179,7 +179,7 @@
             </div>
             
             <div class="tool-section">
-              <div class="tool-section-title">Filtro Malik (adaptativo)</div>
+              <div class="tool-section-title">Filtro Malik (adaptativo) <span class="mi-info" data-clean="malik">i</span></div>
               <div class="form-group">
                 <label class="form-label">Umbral relativo (% del RR previo)</label>
                 <div class="range-row">
@@ -192,7 +192,7 @@
             </div>
             
             <div class="tool-section">
-              <div class="tool-section-title">Filtro Cociente (Karlsson)</div>
+              <div class="tool-section-title">Filtro Cociente (Karlsson) <span class="mi-info" data-clean="quotient">i</span></div>
               <div class="form-group">
                 <label class="form-label">Tolerancia ±%</label>
                 <div class="range-row">
@@ -205,14 +205,14 @@
             </div>
             
             <div class="tool-section">
-              <div class="tool-section-title">Detrend (eliminar tendencia)</div>
+              <div class="tool-section-title">Detrend (eliminar tendencia) <span class="mi-info" data-clean="detrend">i</span></div>
               <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">
                 Elimina la deriva lenta de la señal RR preservando los valores medios.
               </div>
               <button class="btn btn-secondary btn-sm btn-full" onclick="Clean.detrendLinear()">Detrend lineal</button>
             </div>
             <div class="tool-section">
-              <div class="tool-section-title">Suavizado (media móvil)</div>
+              <div class="tool-section-title">Suavizado (media móvil) <span class="mi-info" data-clean="smooth">i</span></div>
               <div class="form-group">
                 <label class="form-label">Semivergencia ±latidos</label>
                 <input type="number" class="form-input" id="smoothWin" value="2" min="1" max="20">
@@ -221,7 +221,7 @@
             </div>
             
             <div class="tool-section">
-              <div class="tool-section-title">Interpolación</div>
+              <div class="tool-section-title">Interpolación <span class="mi-info" data-clean="interpolation">i</span></div>
               <div class="form-group">
                 <label class="form-label">Método</label>
                 <select class="form-select" id="interpMethod">
@@ -448,6 +448,28 @@
   </div>
 </div>
 
+<!-- GLOBAL DROP OVERLAY -->
+<div id="dropOverlay" style="display:none;position:fixed;inset:0;z-index:5000;
+  background:rgba(0,194,212,0.07);border:3px dashed var(--accent);
+  flex-direction:column;align-items:center;justify-content:center;gap:14px;
+  backdrop-filter:blur(3px);pointer-events:none">
+  <div style="font-size:60px;animation:pulse 1.2s infinite">📁</div>
+  <div style="font-family:'Syne',sans-serif;font-size:24px;font-weight:800;color:var(--accent)">
+    Suelta tu archivo aquí
+  </div>
+  <div style="font-size:13px;color:var(--text-dim)">Formatos soportados: CSV · TXT</div>
+</div>
+
+<!-- FOOTER -->
+<footer style="text-align:center;padding:5px 20px;font-size:11px;color:var(--text-muted);
+  border-top:1px solid var(--border);background:var(--surface);flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;gap:6px">
+  Hecho con <span style="color:var(--error)">❤</span> por
+  <strong style="color:var(--text-dim)">Matías Castillo-Aguilar</strong>
+  <span style="color:var(--border-light)">·</span>
+  HRV Studio v1.0
+</footer>
+
 <!-- IMPORT MODAL -->
 <div class="modal-overlay" id="importModal">
   <div class="modal modal-md">
@@ -616,6 +638,59 @@
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="UI.closeModal('reportModal')">Cerrar</button>
       <button class="btn btn-primary" onclick="IO.exportReportHTML()">💾 Guardar HTML</button>
+    </div>
+  </div>
+</div>
+
+<!-- WELCOME MODAL -->
+<div class="modal-overlay" id="welcomeModal">
+  <div class="modal modal-md">
+    <div class="modal-header">
+      <div class="logo-icon" style="width:32px;height:32px;font-size:16px">♥</div>
+      <span class="modal-title syne">Bienvenido a HRV Studio</span>
+      <div class="modal-close" onclick="UI.closeModal('welcomeModal')">✕</div>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text-dim);margin-bottom:16px;line-height:1.6">
+        Plataforma profesional de análisis de Variabilidad de la Frecuencia Cardíaca (VFC/HRV).
+        <strong style="color:var(--accent)">Todos los cálculos son client-side</strong> — tus datos nunca salen del navegador.
+      </p>
+      <div style="display:grid;gap:8px">
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:11px 14px;display:flex;gap:12px;align-items:flex-start">
+          <span style="font-size:22px;flex-shrink:0">📥</span>
+          <div><div style="font-weight:600;font-size:13px;margin-bottom:3px">Importar grabaciones RR</div>
+          <div style="font-size:12px;color:var(--text-dim)">CSV/TXT con selección visual de columna RR, timestamps, metadatos embebidos. Arrastra archivos a cualquier parte de la pantalla.</div></div>
+        </div>
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:11px 14px;display:flex;gap:12px;align-items:flex-start">
+          <span style="font-size:22px;flex-shrink:0">📊</span>
+          <div><div style="font-weight:600;font-size:13px;margin-bottom:3px">Análisis HRV completo</div>
+          <div style="font-size:12px;color:var(--text-dim)">Dominio temporal (SDNN, RMSSD, pNN50…), frecuencial (LF/HF vía Lomb-Scargle), no lineal (Poincaré, DFA α1/α2, SampEn) e índices compuestos (CVI, CSI, PRSA-DC/AC).</div></div>
+        </div>
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:11px 14px;display:flex;gap:12px;align-items:flex-start">
+          <span style="font-size:22px;flex-shrink:0">🔲</span>
+          <div><div style="font-weight:600;font-size:13px;margin-bottom:3px">Ventanas de análisis</div>
+          <div style="font-size:12px;color:var(--text-dim)">Dibuja segmentos sobre el tacograma para comparar métricas entre fases de un protocolo. Doble clic sobre el chip para renombrar.</div></div>
+        </div>
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:11px 14px;display:flex;gap:12px;align-items:flex-start">
+          <span style="font-size:22px;flex-shrink:0">🧹</span>
+          <div><div style="font-weight:600;font-size:13px;margin-bottom:3px">Limpieza interactiva</div>
+          <div style="font-size:12px;color:var(--text-dim)">Filtros por umbral, SD, Malik, Karlsson, detrend y suavizado. Selección por clic o arrastre rectangular. Pasa el cursor sobre <span class="mi-info" style="pointer-events:none;cursor:default">i</span> para ver la descripción de cada método.</div></div>
+        </div>
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:11px 14px;display:flex;gap:12px;align-items:flex-start">
+          <span style="font-size:22px;flex-shrink:0">📄</span>
+          <div><div style="font-weight:600;font-size:13px;margin-bottom:3px">Reporte + exportación</div>
+          <div style="font-size:12px;color:var(--text-dim)">Informe HTML standalone con gráficos y tablas clínicas. Exportación CSV/JSON individual o en lote con filtros avanzados por sexo, carpeta, etiqueta y más.</div></div>
+        </div>
+      </div>
+      <div style="margin-top:12px;font-size:11px;color:var(--text-muted);text-align:center">
+        💡 Pasa el cursor sobre <span class="mi-info" style="pointer-events:none;cursor:default">i</span> en cualquier métrica para ver definición, fórmula y rangos normativos.
+      </div>
+    </div>
+    <div class="modal-footer">
+      <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-muted);cursor:pointer;margin-right:auto;user-select:none">
+        <input type="checkbox" id="welcomeDontShow"> No mostrar de nuevo
+      </label>
+      <button class="btn btn-primary" onclick="App.closeWelcome()">¡Comenzar →</button>
     </div>
   </div>
 </div>

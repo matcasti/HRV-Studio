@@ -81,6 +81,71 @@ function _miInfo(key) {
   return `<span class="mi-info" data-metric="${key}">i</span>`;
 }
 
+// ===== CLEANING METHOD INFO =====
+const CLEAN_INFO = {
+  threshold: {
+    n: 'Filtro por umbral fijo',
+    d: 'Descarta todo intervalo RR fuera de los límites [mín, máx] definidos. Detecta artefactos obvios independientemente de la variabilidad del sujeto.',
+    r: 'Límites habituales: 300–2000 ms en adultos en reposo (Taquicardia severa: >150 bpm → 400 ms mín).',
+    pros: 'Rápido, explícito e interpretable. Ideal como primer paso.',
+    cons: 'No adaptativo: puede eliminar latidos legítimos en bradi/taquicardia extremas.'
+  },
+  sdFilter: {
+    n: 'Filtro estadístico por desviación estándar',
+    d: 'Elimina intervalos que se alejan más de N desviaciones estándar de la media activa. Adaptativo: el umbral depende de la distribución del sujeto.',
+    r: '±2.0σ conservador · ±2.5σ estándar (Task Force) · ±3.0σ permisivo.',
+    pros: 'Se adapta a cada sujeto. Conserva la variabilidad fisiológica real.',
+    cons: 'Sesgado si hay muchos artefactos que inflan la SD. Aplicar después del umbral fijo.'
+  },
+  diffFilter: {
+    n: 'Filtro por diferencias sucesivas absolutas (ΔRR)',
+    d: 'Marca un latido si su diferencia absoluta con el intervalo anterior supera el umbral. Detecta cambios bruscos latido-a-latido (ectopias ventriculares, dropout).',
+    r: 'Umbral habitual: 150–300 ms. La Task Force sugiere el 20% del RR previo (véase Malik).',
+    pros: 'Detecta transiciones rápidas que superan el filtro de umbral.',
+    cons: 'Puede marcar VFC fisiológica alta. Ajustar según actividad del sujeto.'
+  },
+  malik: {
+    n: 'Filtro Malik (relativo al RR previo)',
+    d: 'Marca el latido si |RRᵢ − RRᵢ₋₁| / RRᵢ₋₁ > umbral. Versión relativa y adaptativa a la FC: el mismo cambio absoluto es más tolerable a FC baja.',
+    r: '20% es el umbral recomendado por Malik et al. (1993). Usado por Kubios y Polar.',
+    pros: 'Adaptativo a la FC. Equivalente al criterio 20% del estándar ESC.',
+    cons: 'Asimétrico: más estricto para desaceleraciones que aceleraciones en bradicardia.'
+  },
+  quotient: {
+    n: 'Filtro Cociente — Karlsson (2001)',
+    d: 'Descarta el latido si el cociente RRᵢ/RRᵢ₋₁ ∉ [1−q, 1+q]. Matemáticamente equivalente al filtro Malik pero más estable numéricamente con FC altas.',
+    r: 'Karlsson et al. (2001) recomiendan q = 0.20 (±20%).',
+    pros: 'Más estable que el filtro de diferencias en taquicardia. Simétrico en términos de cociente.',
+    cons: 'Mismos límites de interpretación que el filtro Malik.'
+  },
+  interpolation: {
+    n: 'Interpolación de latidos removidos',
+    d: 'Sustituye los latidos marcados por valores estimados. Preserva la longitud de la serie y evita discontinuidades en el espectro de frecuencias.\n\n• Lineal: recta entre vecinos — estándar Task Force.\n• Cúbica (Catmull-Rom): suaviza la transición — mejor para HF.\n• Media local: promedio de vecinos inmediatos.',
+    r: 'Usar solo si <5% de latidos removidos. Task Force (1996) recomienda interpolación lineal.',
+    pros: 'Mantiene la continuidad temporal y mejora el análisis espectral.',
+    cons: 'Introduce datos sintéticos. No usar si los artefactos forman grupos (burst).'
+  },
+  detrend: {
+    n: 'Detrend lineal',
+    d: 'Resta la recta de regresión de la serie RR y añade la media original. Elimina la deriva lenta (postura, temperatura, fatiga) mejorando la estacionariedad requerida por el análisis espectral.',
+    r: 'Recomendado en grabaciones >5 min con deriva visible. Tarvainen et al. (2002) proponen detrend suavizado (smoothness priors) para series largas.',
+    pros: 'Mejora la estacionariedad. Aumenta la calidad del espectro LF/VLF.',
+    cons: 'Elimina información real sobre tendencias lentas. No aplicar si la deriva es clínicamente relevante.'
+  },
+  smooth: {
+    n: 'Suavizado por media móvil',
+    d: 'Reemplaza cada latido por la media de los ±k latidos vecinos. Atenúa el ruido de alta frecuencia y la cuantización de dispositivos de baja resolución.',
+    r: 'Ventana ±1–2 latidos como máximo para preservar VFC. Ventanas >±4 atenúan drásticamente RMSSD y HF.',
+    pros: 'Útil para señales con cuantización gruesa (ej. 1ms vs 1/1024s).',
+    cons: 'Reduce artificialmente RMSSD, pNN50 y potencia HF. Usar solo si hay ruido de cuantización evidente.'
+  }
+};
+
+function _cleanInfo(key) {
+  if (!CLEAN_INFO[key]) return '';
+  return `<span class="mi-info" data-clean="${key}">i</span>`;
+}
+
 // ===== INDEXEDDB MODULE =====
 const DB = (() => {
   const DB_NAME = 'HRVStudio', DB_VERSION = 1;
@@ -589,17 +654,29 @@ const HRV = {
     };
   },
 
-  _corrDim(data, r) {
-    const n = data.length;
-    let C = 0;
-    const pairs = n * (n - 1) / 2;
-    if (pairs === 0) return null;
-    for (let i = 0; i < n; i++)
-      for (let j = i + 1; j < n; j++)
-        if (Math.abs(data[i] - data[j]) < r) C++;
-    const cr = C / pairs;
-    if (cr <= 0 || cr >= 1) return null;
-    return -Math.log(cr) / Math.log(r);
+  /**
+   * Correlation Dimension D2 — Grassberger & Procaccia (1983).
+   * Computes C(r) at 5 scales from 0.1σ to 2σ, then fits log C(r) vs log r.
+   * D2 = slope of the scaling region (linear regime of the log-log plot).
+   */
+  _corrDim(data, _unused) {
+    const n  = data.length;
+    if (n < 20) return null;
+    const sd = MathUtils.stdDev(data) || 1;
+    // Five scales spanning the typical scaling region of HRV data
+    const scales = [0.1, 0.3, 0.6, 1.0, 1.5, 2.0].map(k => k * sd);
+    const logR = [], logC = [];
+    for (const r of scales) {
+      let C = 0;
+      const N2 = n * (n - 1);        // total ordered pairs (i≠j)
+      for (let i = 0; i < n; i++)
+        for (let j = 0; j < n; j++)
+          if (i !== j && Math.abs(data[i] - data[j]) < r) C++;
+      const cr = C / N2;
+      if (cr > 0 && cr < 1) { logR.push(Math.log(r)); logC.push(Math.log(cr)); }
+    }
+    if (logR.length < 3) return null;
+    return Math.max(0, MathUtils.linReg(logR, logC).slope);
   },
 
   fullAnalysis(rrRaw) {
@@ -1221,7 +1298,28 @@ const Clean = {
       if (prev != null && next != null) {
         if (method === 'linear') rr[idx] = rr[prev] + (rr[next] - rr[prev]) * ((idx - prev) / (next - prev));
         else if (method === 'mean') rr[idx] = (rr[prev] + rr[next]) / 2;
-        else rr[idx] = (rr[prev] + rr[next]) / 2; // fallback
+        else if (method === 'cubic') {
+          // Catmull-Rom cubic spline (tension 0.5)
+          const t  = (idx - prev) / (next - prev);
+          const rr_ = rec.cleanRR;
+          // Find outer control points (skip removed)
+          let pp = prev - 1;
+          while (pp >= 0 && state.removedBeats.has(pp)) pp--;
+          let nn = next + 1;
+          while (nn < rr_.length && state.removedBeats.has(nn)) nn++;
+          const p0 = pp >= 0          ? rr_[pp]        : rr_[prev];
+          const p1 = rr_[prev];
+          const p2 = rr_[next];
+          const p3 = nn < rr_.length  ? rr_[nn]        : rr_[next];
+          rr[idx] = 0.5 * (
+            (2 * p1) +
+            (-p0 + p2) * t +
+            (2*p0 - 5*p1 + 4*p2 - p3) * t * t +
+            (-p0 + 3*p1 - 3*p2 + p3) * t * t * t
+          );
+        } else {
+          rr[idx] = (rr[prev] + rr[next]) / 2; // mean fallback
+        }
       }
     }
     state.cleanHistory.push(new Set(state.removedBeats));
@@ -1608,6 +1706,10 @@ const WindowMgr = {
     UI.renderWindowsPanel();
     const rr = state.currentRecording?.cleanRR || state.currentRecording?.rrMs;
     if (rr) Charts.renderInteractiveTachogram(rr, this.getAll(), null);
+    // Immediately update the segments tab so renamed/added/deleted windows reflect there
+    if (state.currentView === 'analyze' && state.dynamicTab === 'segments') {
+      UI._renderDynamicTab('segments');
+    }
   }
 };
 
@@ -1997,23 +2099,41 @@ const IO = {
       add('PRSA', 'AC (Acceleration Capacity)', prsa.AC, 'ms', '');
     }
 
-    // Ventanas de análisis
+    // Ventanas de análisis — todos los índices
     for (const w of (recording.windows || [])) {
       if (!w.analysis) continue;
-      const { td: wt, fd: wf, nl: wn } = w.analysis;
+      const { td: wt, fd: wf, nl: wn, comp: wc } = w.analysis;
       const p = `Ventana "${w.label}"`;
+      const b = `${w.analysis.beatCount ?? '?'} lat. · ${(w.analysis.durationMin ?? 0).toFixed(2)} min`;
+      add(p, 'Latidos / Duración', b);
       if (wt) {
-        add(p,'SDNN',    wt.sdnn,   'ms'); add(p,'RMSSD',   wt.rmssd,  'ms');
-        add(p,'pNN50',   wt.pnn50,  '%'); add(p,'FC media', wt.meanHR, 'bpm');
-        add(p,'CV',      wt.cv,     '%'); add(p,'N latidos',wt.n,      'lat.');
+        add(p,'Mean RR',     wt.mean,     'ms'); add(p,'Mediana RR', wt.medianRR, 'ms');
+        add(p,'Min RR',      wt.minRR,    'ms'); add(p,'Max RR',     wt.maxRR,    'ms');
+        add(p,'SDNN',        wt.sdnn,     'ms'); add(p,'RMSSD',      wt.rmssd,    'ms');
+        add(p,'NN50',        wt.nn50,  'lat.'); add(p,'pNN50',       wt.pnn50,    '%');
+        add(p,'NN20',        wt.nn20,  'lat.'); add(p,'pNN20',       wt.pnn20,    '%');
+        add(p,'CV',          wt.cv,       '%'); add(p,'Índice Triang.',wt.triIndex,'u.a.');
+        add(p,'FC media',    wt.meanHR, 'bpm'); add(p,'FC SD',       wt.sdHR,   'bpm');
+        add(p,'FC mínima',   wt.minHR,  'bpm'); add(p,'FC máxima',   wt.maxHR,  'bpm');
       }
       if (wf) {
-        add(p,'LF',   wf.lf,    'ms²'); add(p,'HF',   wf.hf,    'ms²');
-        add(p,'LF/HF',wf.lfhf,  '');   add(p,'LF norm',wf.lfNorm,'n.u.');
+        add(p,'VLF',         wf.vlf,   'ms²'); add(p,'LF',          wf.lf,    'ms²');
+        add(p,'HF',          wf.hf,    'ms²'); add(p,'Pot. Total',   wf.total, 'ms²');
+        add(p,'LF norm',     wf.lfNorm,'n.u.'); add(p,'HF norm',    wf.hfNorm,'n.u.');
+        add(p,'LF/HF',       wf.lfhf,     ''); add(p,'Pico LF',    wf.lfPeakF,'Hz');
+        add(p,'Pico HF',     wf.hfPeakF, 'Hz');
       }
       if (wn) {
-        add(p,'SD1',    wn.sd1,    'ms'); add(p,'SD2',    wn.sd2,    'ms');
-        add(p,'SampEn', wn.sampen, 'bits');
+        add(p,'SD1',         wn.sd1,   'ms'); add(p,'SD2',          wn.sd2,   'ms');
+        add(p,'SD1/SD2',     wn.sd1sd2,  ''); add(p,'SampEn',       wn.sampen,'bits');
+        add(p,'ApEn',        wn.apen, 'bits'); add(p,'DFA α1',       wn.alpha1,   '');
+        add(p,'DFA α2',      wn.alpha2,   ''); add(p,'CorrDim D2',  wn.corrDim,  '');
+      }
+      if (wc) {
+        add(p,'CVI',         wc.cvi,      ''); add(p,'CSI',          wc.csi,      '');
+        add(p,'GSI',         wc.gsi,    'ms'); add(p,'Stress Index', wc.stressIndex,'u.a.');
+        add(p,'Pot. Vagal',  wc.vagusPower,'%'); add(p,'Pot. Simpática',wc.symPower,'%');
+        add(p,'DC',          wc.dc,     'ms'); add(p,'AC',            wc.ac,    'ms');
       }
     }
 
@@ -2536,65 +2656,96 @@ const IO = {
     const valid = (wins || []).filter(w => w.analysis);
     if (!valid.length) return '';
     const m = MathUtils.fmt;
-
-    // Métricas a mostrar en la tabla comparativa
-    const metrics = [
-      ['N latidos',  'lat.',  w => w.analysis.beatCount ?? (w.endBeat - w.startBeat)],
-      ['Duración',   'min',   w => m(w.analysis.durationMin, 2)],
-      ['SDNN',       'ms',    w => m(w.analysis.td?.sdnn,  1)],
-      ['RMSSD',      'ms',    w => m(w.analysis.td?.rmssd, 1)],
-      ['pNN50',      '%',     w => m(w.analysis.td?.pnn50, 1)],
-      ['pNN20',      '%',     w => m(w.analysis.td?.pnn20, 1)],
-      ['FC media',   'bpm',   w => m(w.analysis.td?.meanHR,1)],
-      ['CV',         '%',     w => m(w.analysis.td?.cv,    2)],
-      ['VLF',        'ms²',   w => w.analysis.fd?.vlf  ?? '—'],
-      ['LF',         'ms²',   w => w.analysis.fd?.lf   ?? '—'],
-      ['HF',         'ms²',   w => w.analysis.fd?.hf   ?? '—'],
-      ['LF/HF',      '',      w => m(w.analysis.fd?.lfhf,  3)],
-      ['LF norm',    'n.u.',  w => m(w.analysis.fd?.lfNorm,1)],
-      ['HF norm',    'n.u.',  w => m(w.analysis.fd?.hfNorm,1)],
-      ['SD1',        'ms',    w => m(w.analysis.nl?.sd1,   1)],
-      ['SD2',        'ms',    w => m(w.analysis.nl?.sd2,   1)],
-      ['SD1/SD2',    '',      w => m(w.analysis.nl?.sd1sd2,3)],
-      ['SampEn',     'bits',  w => m(w.analysis.nl?.sampen,3)],
-      ['DFA α1',     '',      w => m(w.analysis.nl?.alpha1,3)],
-    ];
-
-    // Estilos según contexto
     const s = standalone;
+
     const thS  = s ? `style="padding:8px 12px;background:linear-gradient(90deg,#09253f,#1558a0);color:#fff;font-size:10.5px;font-weight:600;text-align:left;border:1px solid #c0cfe0"` : `style="background:var(--card2);padding:7px 10px;font-size:11px;color:var(--text-dim);text-align:left;border:1px solid var(--border)"`;
-    const tdS  = s ? `style="padding:7px 12px;border:1px solid #d8e2f0;font-size:11px;color:#2d3f55;font-weight:500"` : `style="padding:6px 10px;border:1px solid var(--border);font-size:11px;color:var(--text)"`;
+    const tdS  = s ? `style="padding:7px 12px;border:1px solid #d8e2f0;font-size:11px;color:#2d3f55;font-weight:500;white-space:nowrap"` : `style="padding:6px 10px;border:1px solid var(--border);font-size:11px;color:var(--text)"`;
     const unitS= s ? `style="padding:7px 12px;border:1px solid #d8e2f0;font-size:10px;color:#8a9bb8"` : `style="padding:6px 10px;border:1px solid var(--border);font-size:10px;color:var(--text-muted)"`;
-    const vcS  = s ? `style="padding:7px 12px;border:1px solid #d8e2f0;font-family:'JetBrains Mono',monospace;font-size:12px;color:#1457b8;font-weight:600"` : `style="padding:6px 10px;border:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent)"`;
-    const dotS = (c) => `display:inline-block;width:9px;height:9px;border-radius:50%;background:${c};margin-right:5px;vertical-align:middle;flex-shrink:0`;
+    const vcS  = s ? `style="padding:7px 12px;border:1px solid #d8e2f0;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#1457b8;font-weight:600;text-align:right"` : `style="padding:6px 10px;border:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent);text-align:right"`;
+    const dotS = c => `display:inline-block;width:9px;height:9px;border-radius:50%;background:${c};margin-right:5px;vertical-align:middle`;
+
+    const secClass   = s ? 'class="sec"' : 'class="report-section"';
+    const titleClass = s ? 'class="sec-title"' : 'class="report-section-title"';
+    const titleBar   = s ? '<span class="sec-title-bar"></span>' : '';
+    const noteStyle  = s ? `style="background:#f0f5fc;border-left:3px solid #1558a0;padding:8px 12px;font-size:10.5px;color:#4a5e78;margin-top:10px;border-radius:0 6px 6px 0"` : `style="font-size:10px;color:var(--text-muted);margin-top:8px"`;
+
+    // Metric rows: [label, unit, getter(w)]
+    const metrics = [
+      // Time domain
+      ['N latidos',       'lat.',  w => w.analysis.beatCount ?? (w.endBeat - w.startBeat)],
+      ['Duración',        'min',   w => m(w.analysis.durationMin, 2)],
+      ['Mean RR',         'ms',    w => m(w.analysis.td?.mean, 1)],
+      ['Mediana RR',      'ms',    w => w.analysis.td?.medianRR ?? '—'],
+      ['Min RR',          'ms',    w => w.analysis.td?.minRR ?? '—'],
+      ['Max RR',          'ms',    w => w.analysis.td?.maxRR ?? '—'],
+      ['SDNN',            'ms',    w => m(w.analysis.td?.sdnn, 1)],
+      ['RMSSD',           'ms',    w => m(w.analysis.td?.rmssd, 1)],
+      ['pNN50',           '%',     w => m(w.analysis.td?.pnn50, 1)],
+      ['pNN20',           '%',     w => m(w.analysis.td?.pnn20, 1)],
+      ['NN50',            'lat.',  w => w.analysis.td?.nn50 ?? '—'],
+      ['CV',              '%',     w => m(w.analysis.td?.cv, 2)],
+      ['Índice Triang.',  'u.a.',  w => m(w.analysis.td?.triIndex, 1)],
+      ['FC media',        'bpm',   w => m(w.analysis.td?.meanHR, 1)],
+      ['FC SD',           'bpm',   w => m(w.analysis.td?.sdHR, 1)],
+      ['FC mínima',       'bpm',   w => m(w.analysis.td?.minHR, 1)],
+      ['FC máxima',       'bpm',   w => m(w.analysis.td?.maxHR, 1)],
+      // Frequency
+      ['VLF (ms²)',       'ms²',   w => w.analysis.fd?.vlf    ?? '—'],
+      ['LF (ms²)',        'ms²',   w => w.analysis.fd?.lf     ?? '—'],
+      ['HF (ms²)',        'ms²',   w => w.analysis.fd?.hf     ?? '—'],
+      ['Pot. Total',      'ms²',   w => w.analysis.fd?.total  ?? '—'],
+      ['LF norm',         'n.u.',  w => m(w.analysis.fd?.lfNorm, 1)],
+      ['HF norm',         'n.u.',  w => m(w.analysis.fd?.hfNorm, 1)],
+      ['LF/HF',           '',      w => m(w.analysis.fd?.lfhf, 3)],
+      ['Pico LF',         'Hz',    w => w.analysis.fd?.lfPeakF ?? '—'],
+      ['Pico HF',         'Hz',    w => w.analysis.fd?.hfPeakF ?? '—'],
+      // Non-linear
+      ['SD1 (Poincaré)',  'ms',    w => m(w.analysis.nl?.sd1, 1)],
+      ['SD2 (Poincaré)',  'ms',    w => m(w.analysis.nl?.sd2, 1)],
+      ['SD1/SD2',         '',      w => m(w.analysis.nl?.sd1sd2, 3)],
+      ['SampEn',          'bits',  w => m(w.analysis.nl?.sampen, 3)],
+      ['ApEn',            'bits',  w => m(w.analysis.nl?.apen, 3)],
+      ['DFA α1',          '',      w => m(w.analysis.nl?.alpha1, 3)],
+      ['DFA α2',          '',      w => m(w.analysis.nl?.alpha2, 3)],
+      ['CorrDim D2',      '',      w => m(w.analysis.nl?.corrDim, 2)],
+      // Composite
+      ['CVI',             '',      w => m(w.analysis.comp?.cvi, 3)],
+      ['CSI',             '',      w => m(w.analysis.comp?.csi, 2)],
+      ['GSI',             'ms',    w => m(w.analysis.comp?.gsi, 1)],
+      ['Stress Index',    'u.a.',  w => m(w.analysis.comp?.stressIndex, 2)],
+      ['Pot. Vagal',      '%',     w => m(w.analysis.comp?.vagusPower, 1)],
+      ['Pot. Simpática',  '%',     w => m(w.analysis.comp?.symPower, 1)],
+      ['DC',              'ms',    w => m(w.analysis.comp?.dc, 2)],
+      ['AC',              'ms',    w => m(w.analysis.comp?.ac, 2)],
+    ];
 
     const headerRow = `<tr>
       <th ${thS}>Métrica</th><th ${thS}>Unidad</th>
       ${valid.map(w => `<th ${thS}>
-        <span style="${dotS(w.color)}"></span>${w.label}
-        <span style="font-size:9px;font-weight:400;opacity:.7;display:block">${w.startBeat}–${w.endBeat} lat.</span>
+        ${w.color ? `<span style="${dotS(w.color)}"></span>` : ''}${w.label}
+        <span style="font-size:9px;font-weight:400;opacity:.65;display:block">
+          ${w.analysis.beatCount ?? '?'} lat. · ${m(w.analysis.durationMin, 1)} min
+        </span>
       </th>`).join('')}
     </tr>`;
 
-    const dataRows = metrics.map(([label, unit, getter]) =>
-      `<tr><td ${tdS}>${label}</td><td ${unitS}>${unit}</td>
+    const dataRows = metrics.map(([label, unit, getter], ri) =>
+      `<tr ${ri % 2 === 0 ? `style="background:${s ? '#f7fafd' : 'var(--card2)'}"` : ''}>
+        <td ${tdS}>${label}</td>
+        <td ${unitS}>${unit}</td>
         ${valid.map(w => `<td ${vcS}>${getter(w) ?? '—'}</td>`).join('')}
       </tr>`
     ).join('');
 
-    const secClass  = s ? 'class="sec"'          : 'class="report-section"';
-    const titleClass = s ? 'class="sec-title"'   : 'class="report-section-title"';
-    const titleBar  = s ? '<span class="sec-title-bar"></span>' : '';
-
     return `
       <div ${secClass}>
-        <div ${titleClass}>${titleBar}ANÁLISIS POR VENTANAS TEMPORALES</div>
-        <p style="font-size:11px;color:${s ? '#6a7d96' : 'var(--text-dim)'};margin-bottom:12px">
-          ${valid.length} ventana${valid.length !== 1 ? 's' : ''} definida${valid.length !== 1 ? 's' : ''}.
-          Comparativa de métricas principales entre segmentos del registro.
+        <div ${titleClass}>${titleBar}ANÁLISIS COMPARATIVO POR VENTANAS TEMPORALES</div>
+        <p ${noteStyle}>
+          ${valid.length} ventana${valid.length!==1?'s':''} definida${valid.length!==1?'s':''}.
+          Comparativa completa de todos los índices calculados entre segmentos del registro.
         </p>
-        <div style="overflow-x:auto">
-          <table style="width:100%;border-collapse:collapse;min-width:460px">
+        <div style="overflow-x:auto;margin-top:10px">
+          <table style="width:100%;border-collapse:collapse;min-width:${300 + valid.length * 100}px">
             <thead>${headerRow}</thead>
             <tbody>${dataRows}</tbody>
           </table>
@@ -3031,60 +3182,123 @@ const UI = {
       const wins = WindowMgr.getAll();
       const fmt  = MathUtils.fmt;
 
-      // ── Use user-defined windows if they exist; else auto-split into 3 ──
+      // Build unified segment list: windows if defined, else auto-split
       let segs;
       if (wins.length) {
         segs = wins.map(w => {
-          const seg = rr.slice(w.startBeat, w.endBeat + 1);
+          const seg  = rr.slice(w.startBeat, w.endBeat + 1);
+          const td   = w.analysis?.td   || HRV.timeDomain(seg);
+          const fd   = w.analysis?.fd   || HRV.frequencyDomain(seg);
+          const nl   = w.analysis?.nl   || HRV.nonLinear(seg);
+          const comp = w.analysis?.comp || HRV.composite(td, fd, nl, seg);
           return {
-            label:       w.label,
-            color:       w.color,
-            start:       w.startBeat,
-            end:         w.endBeat,
-            durationMin: MathUtils.sum(seg) / 60000,
-            td:  w.analysis?.td  || HRV.timeDomain(seg),
-            fd:  w.analysis?.fd  || HRV.frequencyDomain(seg),
-            nl:  w.analysis?.nl  || HRV.nonLinear(seg)
+            label: w.label, color: w.color,
+            beatCount:   w.analysis?.beatCount   ?? seg.length,
+            durationMin: w.analysis?.durationMin ?? MathUtils.sum(seg) / 60000,
+            td, fd, nl, comp
           };
         });
       } else {
-        segs = NonStationary.autoSegment(rr, 3);
-        segs.forEach(s => { s.color = null; });
+        segs = NonStationary.autoSegment(rr, 3).map(s => ({
+          ...s, color: null,
+          beatCount: s.end - s.start,
+          comp: HRV.composite(s.td, s.fd, s.nl, rr.slice(s.start, s.end))
+        }));
       }
 
-      const dotHTML = s => s.color
-        ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${s.color};margin-right:4px;vertical-align:middle"></span>`
+      // Metric rows definition: [label, unit, getter]
+      const metricRows = [
+        // Time domain
+        ['N latidos',       'lat.',  s => s.beatCount ?? '—'],
+        ['Duración',        'min',   s => fmt(s.durationMin, 2)],
+        ['Mean RR',         'ms',    s => fmt(s.td?.mean, 1)],
+        ['Mediana RR',      'ms',    s => s.td?.medianRR ?? '—'],
+        ['Min RR',          'ms',    s => s.td?.minRR ?? '—'],
+        ['Max RR',          'ms',    s => s.td?.maxRR ?? '—'],
+        ['SDNN',            'ms',    s => fmt(s.td?.sdnn, 1)],
+        ['RMSSD',           'ms',    s => fmt(s.td?.rmssd, 1)],
+        ['pNN50',           '%',     s => fmt(s.td?.pnn50, 1)],
+        ['pNN20',           '%',     s => fmt(s.td?.pnn20, 1)],
+        ['NN50',            'lat.',  s => s.td?.nn50 ?? '—'],
+        ['CV',              '%',     s => fmt(s.td?.cv, 2)],
+        ['Índice Triang.',  'u.a.',  s => fmt(s.td?.triIndex, 1)],
+        ['FC media',        'bpm',   s => fmt(s.td?.meanHR, 1)],
+        ['FC SD',           'bpm',   s => fmt(s.td?.sdHR, 1)],
+        ['FC mínima',       'bpm',   s => fmt(s.td?.minHR, 1)],
+        ['FC máxima',       'bpm',   s => fmt(s.td?.maxHR, 1)],
+        // Frequency
+        ['VLF',             'ms²',   s => s.fd?.vlf   ?? '—'],
+        ['LF',              'ms²',   s => s.fd?.lf    ?? '—'],
+        ['HF',              'ms²',   s => s.fd?.hf    ?? '—'],
+        ['Pot. Total',      'ms²',   s => s.fd?.total ?? '—'],
+        ['LF norm',         'n.u.',  s => fmt(s.fd?.lfNorm, 1)],
+        ['HF norm',         'n.u.',  s => fmt(s.fd?.hfNorm, 1)],
+        ['LF/HF',           '',      s => fmt(s.fd?.lfhf, 3)],
+        ['Pico LF',         'Hz',    s => s.fd?.lfPeakF ?? '—'],
+        ['Pico HF',         'Hz',    s => s.fd?.hfPeakF ?? '—'],
+        // Non-linear
+        ['SD1',             'ms',    s => fmt(s.nl?.sd1, 1)],
+        ['SD2',             'ms',    s => fmt(s.nl?.sd2, 1)],
+        ['SD1/SD2',         '',      s => fmt(s.nl?.sd1sd2, 3)],
+        ['SampEn',          'bits',  s => fmt(s.nl?.sampen, 3)],
+        ['ApEn',            'bits',  s => fmt(s.nl?.apen, 3)],
+        ['DFA α1',          '',      s => fmt(s.nl?.alpha1, 3)],
+        ['DFA α2',          '',      s => fmt(s.nl?.alpha2, 3)],
+        // Composite
+        ['CVI',             '',      s => fmt(s.comp?.cvi, 3)],
+        ['CSI',             '',      s => fmt(s.comp?.csi, 2)],
+        ['GSI',             'ms',    s => fmt(s.comp?.gsi, 1)],
+        ['Stress Index',    'u.a.',  s => fmt(s.comp?.stressIndex, 2)],
+        ['Pot. Vagal',      '%',     s => fmt(s.comp?.vagusPower, 1)],
+        ['Pot. Simpática',  '%',     s => fmt(s.comp?.symPower, 1)],
+        ['DC',              'ms',    s => fmt(s.comp?.dc, 2)],
+        ['AC',              'ms',    s => fmt(s.comp?.ac, 2)],
+      ];
+
+      const dotH = s => s.color
+        ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;
+            background:${s.color};margin-right:5px;vertical-align:middle"></span>`
         : '';
 
       el.innerHTML = `
         <div style="padding:10px 14px">
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">
             ${wins.length
-              ? `Usando <strong>${wins.length} ventana${wins.length!==1?'s':''}</strong> definidas en el tacograma`
-              : 'División automática en 3 segmentos iguales — define ventanas en el tacograma para segmentos personalizados'}
+              ? `Usando <strong>${wins.length} ventana${wins.length!==1?'s':''}</strong> definidas en el tacograma — todos los índices`
+              : 'División automática en 3 segmentos iguales (define ventanas para personalizar)'}
           </div>
           <div style="overflow-x:auto">
-            <table class="segment-table">
-              <tr>
-                <th>Segmento</th><th>Latidos</th><th>Duración</th>
-                <th>SDNN</th><th>RMSSD</th><th>pNN50</th><th>FC media</th>
-                <th>LF (ms²)</th><th>HF (ms²)</th><th>LF/HF</th>
-                <th>SD1</th><th>SD2</th>
-              </tr>
-              ${segs.map(s => `<tr>
-                <td class="label">${dotHTML(s)}${s.label}</td>
-                <td>${s.end - s.start}</td>
-                <td>${fmt(s.durationMin, 2)} min</td>
-                <td>${fmt(s.td?.sdnn,  1)}</td>
-                <td>${fmt(s.td?.rmssd, 1)}</td>
-                <td>${fmt(s.td?.pnn50, 1)}</td>
-                <td>${fmt(s.td?.meanHR,1)}</td>
-                <td>${s.fd?.lf  ?? '—'}</td>
-                <td>${s.fd?.hf  ?? '—'}</td>
-                <td>${fmt(s.fd?.lfhf,  2)}</td>
-                <td>${fmt(s.nl?.sd1,   1)}</td>
-                <td>${fmt(s.nl?.sd2,   1)}</td>
-              </tr>`).join('')}
+            <table style="width:100%;border-collapse:collapse;font-size:11px;min-width:320px">
+              <thead>
+                <tr>
+                  <th style="padding:5px 10px;background:var(--card2);border:1px solid var(--border);
+                    font-weight:600;color:var(--text-dim);text-align:left;position:sticky;left:0;
+                    white-space:nowrap;min-width:120px">Métrica</th>
+                  <th style="padding:5px 8px;background:var(--card2);border:1px solid var(--border);
+                    color:var(--text-muted);font-size:10px;white-space:nowrap">Unidad</th>
+                  ${segs.map(s =>
+                    `<th style="padding:5px 10px;background:var(--card2);border:1px solid var(--border);
+                      color:${s.color || 'var(--text-dim)'};font-weight:600;text-align:right;white-space:nowrap">
+                      ${dotH(s)}${s.label}</th>`
+                  ).join('')}
+                </tr>
+              </thead>
+              <tbody>
+                ${metricRows.map(([label, unit, getter], ri) =>
+                  `<tr style="${ri % 2 === 0 ? 'background:var(--card2)' : ''}">
+                    <td style="padding:4px 10px;border:1px solid var(--border);font-weight:500;
+                      color:var(--text);position:sticky;left:0;
+                      background:${ri % 2 === 0 ? 'var(--card2)' : 'var(--card)'};">${label}</td>
+                    <td style="padding:4px 8px;border:1px solid var(--border);
+                      color:var(--text-muted);font-size:10px">${unit}</td>
+                    ${segs.map(s =>
+                      `<td style="padding:4px 10px;border:1px solid var(--border);
+                        font-family:'JetBrains Mono',monospace;color:var(--accent);
+                        text-align:right">${getter(s) ?? '—'}</td>`
+                    ).join('')}
+                  </tr>`
+                ).join('')}
+              </tbody>
             </table>
           </div>
         </div>`;
@@ -3217,7 +3431,7 @@ const UI = {
     // Composite / Autonomic
     if (comp) {
       html += `<div class="metric-panel">
-        <div class="mp-header" onclick="this.classList.toggle('open')">
+        <div class="mp-header open" onclick="this.classList.toggle('open')">
           <span>⚖️</span><span class="mp-title">Índices Compuestos</span><span class="mp-toggle">▼</span>
         </div>
         <div class="mp-body">
@@ -3499,6 +3713,12 @@ const App = {
       await this.loadAll();
       this.bindEvents();
       UI.notify('HRV Studio listo', 'success');
+      // Show welcome popup for first-time users
+      try {
+        if (!localStorage.getItem('hrv_welcomed')) {
+          setTimeout(() => UI.openModal('welcomeModal'), 600);
+        }
+      } catch {}
     } catch(e) {
       console.error('Init error:', e);
       UI.notify('Error inicializando base de datos', 'error');
@@ -3698,6 +3918,13 @@ const App = {
     this.switchView('library');
     UI.notify('Todos los datos eliminados', 'success');
   },
+  
+  closeWelcome() {
+    if (document.getElementById('welcomeDontShow')?.checked) {
+      try { localStorage.setItem('hrv_welcomed', '1'); } catch {}
+    }
+    UI.closeModal('welcomeModal');
+  },
 
   bindEvents() {
     // Close modals on overlay click
@@ -3720,6 +3947,29 @@ const App = {
     });
     document.addEventListener('mouseup', e => {
       if (state.cleanMode === 'range') Clean.handleCleanMouseUp(e);
+    });
+    
+    // ── Global drag-drop anywhere on the window ──────────────────────────────
+    let _dragCnt = 0;
+    const _ov    = document.getElementById('dropOverlay');
+    window.addEventListener('dragenter', e => {
+      if (![...( e.dataTransfer?.items || [])].some(i => i.kind === 'file')) return;
+      if (++_dragCnt === 1 && _ov) _ov.style.display = 'flex';
+    });
+    window.addEventListener('dragleave', () => {
+      if (--_dragCnt <= 0) { _dragCnt = 0; if (_ov) _ov.style.display = 'none'; }
+    });
+    window.addEventListener('dragover', e => e.preventDefault());
+    window.addEventListener('drop', e => {
+      e.preventDefault();
+      _dragCnt = 0;
+      if (_ov) _ov.style.display = 'none';
+      const file = e.dataTransfer?.files?.[0];
+      if (!file) return;
+      // Don't re-open if already inside the import drop zone (handled by IO.drop)
+      if (e.target.closest?.('#importDrop')) return;
+      UI.openImport();
+      requestAnimationFrame(() => IO.handleFile(file));
     });
 
     // Keyboard shortcuts
@@ -3754,15 +4004,29 @@ const App = {
     document.addEventListener('mouseover', e => {
       const icon = e.target.closest?.('.mi-info');
       if (!icon || !_infoTip) return;
-      const info = METRIC_INFO[icon.dataset.metric];
-      if (!info) return;
-      _infoTip.innerHTML =
-        `<strong style="font-size:12px;color:var(--accent)">${info.n}</strong>` +
-        `<div style="color:var(--text-dim);margin:4px 0;line-height:1.4">${info.d}</div>` +
-        `<hr style="border:none;border-top:1px solid var(--border);margin:5px 0">` +
-        `<div style="color:var(--text-muted);font-size:10px">📐 ${info.c}</div>` +
-        `<div style="color:var(--success);font-size:10px">✓ Normal: ${info.r}</div>` +
-        `<div style="color:var(--warning);font-size:10px">⚠ Alterado: ${info.a}</div>`;
+      let html = '';
+      if (icon.dataset.metric) {
+        const info = METRIC_INFO[icon.dataset.metric];
+        if (!info) return;
+        html =
+          `<strong style="font-size:12px;color:var(--accent)">${info.n}</strong>` +
+          `<div style="color:var(--text-dim);margin:4px 0;line-height:1.4">${info.d}</div>` +
+          `<hr style="border:none;border-top:1px solid var(--border);margin:5px 0">` +
+          `<div style="color:var(--text-muted);font-size:10px">📐 ${info.c}</div>` +
+          `<div style="color:var(--success);font-size:10px">✓ Normal: ${info.r}</div>` +
+          `<div style="color:var(--warning);font-size:10px">⚠ Alterado: ${info.a}</div>`;
+      } else if (icon.dataset.clean) {
+        const info = CLEAN_INFO[icon.dataset.clean];
+        if (!info) return;
+        html =
+          `<strong style="font-size:12px;color:var(--secondary)">${info.n}</strong>` +
+          `<div style="color:var(--text-dim);margin:4px 0;line-height:1.4;white-space:pre-line">${info.d}</div>` +
+          `<hr style="border:none;border-top:1px solid var(--border);margin:5px 0">` +
+          `<div style="color:var(--success);font-size:10px">✓ ${info.r}</div>` +
+          `<div style="color:var(--info);font-size:10px">✅ ${info.pros}</div>` +
+          `<div style="color:var(--warning);font-size:10px">⚠ ${info.cons}</div>`;
+      } else { return; }
+      _infoTip.innerHTML = html;
       _infoTip.hidden = false;
       const rc = icon.getBoundingClientRect();
       const tW = 256, tH = _infoTip.offsetHeight || 130;
