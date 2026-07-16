@@ -343,6 +343,11 @@ canvas { max-width: 100%; }
 .clean-chart-area { flex: 1; padding: 14px; overflow: hidden; position: relative; }
 .clean-chart-wrapper { width: 100%; height: 100%; position: relative; }
 
+/* El canvas debe llenar el 100% de su contenedor por CSS explícito (no por
+   max-width:100% implícito) para que canvas.width/height coincidan 1:1 con
+   getBoundingClientRect(); si no, los clics y arrastres quedan desfasados. */
+#cleanChart { display: block; width: 100%; height: 100%; }
+
 /* ===== BUTTONS ===== */
 .btn {
   display: inline-flex; align-items: center; gap: 6px;

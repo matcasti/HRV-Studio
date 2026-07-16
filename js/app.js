@@ -1025,12 +1025,17 @@ const Charts = {
 
   renderCleanChart(rrMs, removed = new Set()) {
     this.destroyChart('cleanChartInst');
+    
     const canvas = document.getElementById('cleanChart');
     if (!canvas) return;
-    const parent = canvas.parentElement;
-    canvas.width = parent.offsetWidth || 800;
-    canvas.height = parent.offsetHeight || 340;
+    // Medimos el propio canvas (no su contenedor, que tiene padding) para que
+    // el buffer de dibujo coincida exactamente con el tamaño renderizado —
+    // así los handlers de clic/arrastre quedan alineados 1:1 (mismo patrón
+    // que ya usa Charts.renderPoincare con canvas.offsetWidth).
+    canvas.width = canvas.clientWidth || 800;
+    canvas.height = canvas.clientHeight || 340;
     const ctx = canvas.getContext('2d');
+    
     const W = canvas.width, H = canvas.height;
     const pad = { t: 20, r: 20, b: 36, l: 50 };
     const plotW = W - pad.l - pad.r, plotH = H - pad.t - pad.b;
