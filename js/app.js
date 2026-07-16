@@ -16,6 +16,7 @@ const state = {
   cleanMode: 'view',
   cleanHistory: [],
   importBuffer: null,
+  importQueue: [],
   charts: {},
   settings: {
     rrUnit: 'ms', fsResample: 4,
@@ -738,9 +739,9 @@ const Parse = {
           header:  cols, commentMeta, lines
         };
       }
-      return { format: 'csv-noheader', sep, lines };
+      return { format: 'csv-noheader', sep, commentMeta, lines };
     }
-    return { format: 'txt-plain', lines };
+    return { format: 'txt-plain', commentMeta, lines };
   },
 
   parse(text, detected, rrColIdx = null) {
@@ -1394,10 +1395,40 @@ const Clean = {
     const rec = state.currentRecording;
     if (!rec) return;
     rec.removedBeats = [...state.removedBeats];
+
+    // Las ventanas de análisis guardan índices de latido relativos a cleanRR.
+    // Al eliminar latidos el array se acorta y todo índice posterior se
+    // desplaza — sin este remapeo, las ventanas quedarían apuntando
+    // silenciosamente a un rango de latidos distinto del original.
+    if (rec.windows?.length) {
+      const map = new Array(rec.cleanRR.length).fill(-1);
+      let ni = 0;
+      for (let i = 0; i < rec.cleanRR.length; i++) {
+        if (!state.removedBeats.has(i)) map[i] = ni++;
+      }
+      const nearestKept = (b, dir) => {
+        let i = b;
+        while (i >= 0 && i < map.length && map[i] === -1) i += dir;
+        return (i >= 0 && i < map.length) ? map[i] : null;
+      };
+      const kept = [];
+      for (const w of rec.windows) {
+        const ns = nearestKept(w.startBeat, 1);   // encoge desde el inicio
+        const ne = nearestKept(w.endBeat, -1);    // encoge desde el final
+        if (ns != null && ne != null && ne - ns >= 9) {
+          w.startBeat = ns; w.endBeat = ne; kept.push(w);
+        }
+      }
+      const dropped = rec.windows.length - kept.length;
+      rec.windows = kept;
+      if (dropped > 0) UI.notify(`${dropped} ventana(s) descartadas: quedaron fuera de rango tras la limpieza`, 'error');
+    }
+
     rec.cleanRR = rec.cleanRR.filter((_, i) => !state.removedBeats.has(i));
     state.removedBeats = new Set();
     const analysis = HRV.fullAnalysis(rec.cleanRR);
     if (analysis) Object.assign(rec, analysis);
+    for (const w of (rec.windows || [])) w.analysis = WindowMgr._analyze(w);
     rec.modified = Date.now();
     await DB.put('recordings', rec);
     await App.loadRecordings();
@@ -1869,17 +1900,55 @@ const NonStationary = {
 // ===== IMPORT/EXPORT =====
 const IO = {
   dragover(e) { e.preventDefault(); document.getElementById('importDrop').classList.add('dragover'); },
+  dragleave(e) { document.getElementById('importDrop').classList.remove('dragover'); },
   drop(e) {
     e.preventDefault(); document.getElementById('importDrop').classList.remove('dragover');
-    const file = e.dataTransfer.files[0];
-    if (file) this.handleFile(file);
+    this.handleFiles(e.dataTransfer.files);
+  },
+
+  /** Entry point para uno o varios archivos (input o drag-drop). El primero
+   *  se carga para revisión ahora; el resto queda en cola y se carga solo,
+   *  uno a uno, a medida que cada archivo previo se confirma. */
+  handleFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    state.importQueue = files.slice(1);
+    this._updateQueueBadge();
+    this.handleFile(files[0]);
+  },
+
+  _updateQueueBadge() {
+    const el  = document.getElementById('importQueueInfo');
+    const cnt = document.getElementById('importQueueCount');
+    if (!el || !cnt) return;
+    const n = state.importQueue.length;
+    cnt.textContent = n;
+    el.style.display = n > 0 ? 'flex' : 'none';
+  },
+
+  /** Si un archivo falla al parsear, avanza solo al siguiente en cola (si hay). */
+  _skipQueuedFile() {
+    if (!state.importQueue.length) return;
+    const next = state.importQueue.shift();
+    this._updateQueueBadge();
+    this.handleFile(next);
   },
 
   async handleFile(file) {
     if (!file) return;
+    // Resetea la UI de revisión para que no queden restos del archivo
+    // anterior (sobre todo si ese falló al parsear).
+    state.importBuffer = null;
+    document.getElementById('importSettings').style.display = 'none';
+    document.getElementById('importConfirmBtn').style.display = 'none';
+    document.getElementById('importDetected').style.display = 'none';
+    document.getElementById('importPreview').style.display = 'none';
+    const colSelReset = document.getElementById('importColSelector');
+    if (colSelReset) colSelReset.style.display = 'none';
+
     const text     = await file.text();
     const detected = Parse.detect(text);
-    if (!detected) { UI.notify('Formato no reconocido', 'error'); return; }
+    if (!detected) { UI.notify(`"${file.name}": formato no reconocido`, 'error'); this._skipQueuedFile(); return; }
 
     state.importBuffer = { text, detected, values: null, filename: file.name };
 
@@ -1944,7 +2013,7 @@ const IO = {
     } else {
       // ── Plain text / no-header CSV: simple flow ────────────────────────────
       const values = Parse.parse(text, detected);
-      if (!values || values.length < 5) { UI.notify('No se encontraron valores RR válidos', 'error'); return; }
+      if (!values || values.length < 5) { UI.notify(`"${file.name}": sin valores RR válidos`, 'error'); this._skipQueuedFile(); return; }
       state.importBuffer.values = values;
       const unit = MathUtils.median(values) < 5 ? 's' : 'ms';
       document.getElementById('importDetected').style.display = 'block';
@@ -2001,10 +2070,11 @@ const IO = {
                              ?? buf.detected.rrIdx ?? 0);
       buf.values  = Parse.parse(buf.text, buf.detected, rrIdx);
     }
-    // Unit override from selector
-    const unitOverride = document.getElementById('importUnit')?.value
-                      || document.getElementById('importUnitTxt')?.value
-                      || 'auto';
+    // Unit override — usa el selector correspondiente al flujo activo
+    // (ambos existen en el DOM, pero solo uno está visible por archivo).
+    const unitOverride = (buf.detected.format === 'csv-header'
+      ? document.getElementById('importUnit')?.value
+      : document.getElementById('importUnitTxt')?.value) || 'auto';
 
     const name = document.getElementById('importName').value || 'Grabación sin nombre';
     const folderId = document.getElementById('importFolder').value || null;
@@ -2046,6 +2116,20 @@ const IO = {
 
     await DB.put('recordings', recording);
     await App.loadRecordings();
+
+    if (state.importQueue.length) {
+      // Quedan archivos en cola: nos quedamos en el modal y cargamos el
+      // siguiente, heredando la carpeta elegida (si el archivo no trae la suya).
+      const nextFile    = state.importQueue.shift();
+      const carryFolder = document.getElementById('importFolder')?.value || '';
+      this._updateQueueBadge();
+      UI.notify(`"${name}" importado · ${rrMs.length} latidos · ${state.importQueue.length} en cola`, 'success');
+      await this.handleFile(nextFile);
+      const folderSel = document.getElementById('importFolder');
+      if (folderSel && carryFolder && !folderSel.value) folderSel.value = carryFolder;
+      return;
+    }
+
     UI.closeModal('importModal');
     UI.notify(`"${name}" importado · ${rrMs.length} latidos`, 'success');
     state.currentRecording = recording;
@@ -2055,12 +2139,13 @@ const IO = {
   },
 
   
-  /** Columnas disponibles para exportar los intervalos RR crudos (ver exportCSV). */
+  /** Columnas disponibles para exportar los intervalos RR crudos (ver exportCSV).
+   *  `label`/`get` reciben la unidad activa ('ms'|'s') para las columnas que la usan. */
   RR_EXPORT_COLUMNS: [
-    { key: 'beat', label: 'beat',         get: (v, i, t) => i + 1 },
-    { key: 'rr',   label: 'rr_ms',        get: (v, i, t) => v.toFixed(2) },
-    { key: 'hr',   label: 'hr_bpm',       get: (v, i, t) => (60000 / v).toFixed(2) },
-    { key: 'cum',  label: 'cumulative_s', get: (v, i, t) => t.toFixed(3) },
+    { key: 'beat', label: () => 'beat',           get: (v, i, t, u) => i + 1 },
+    { key: 'rr',   label: u => `rr_${u}`,         get: (v, i, t, u) => u === 's' ? (v / 1000).toFixed(4) : v.toFixed(2) },
+    { key: 'hr',   label: () => 'hr_bpm',         get: (v, i, t, u) => (60000 / v).toFixed(2) },
+    { key: 'cum',  label: u => `cumulative_${u}`, get: (v, i, t, u) => u === 's' ? t.toFixed(3) : (t * 1000).toFixed(1) },
   ],
 
   /** Exporta los intervalos RR crudos de una grabación.
@@ -2068,10 +2153,12 @@ const IO = {
    *  @param {object} [options]
    *  @param {string[]} [options.columns] - claves de RR_EXPORT_COLUMNS a incluir (por defecto: todas)
    *  @param {'csv'|'txt'} [options.format] - 'csv' = coma + encabezado (por defecto) · 'txt' = tabulador, sin encabezado
+   *  @param {'ms'|'s'} [options.unit] - unidad de tiempo para columnas RR y acumulado (por defecto: 'ms')
    */
   async exportCSV(recording, options = {}) {
     if (!recording) return;
     const format = options.format === 'txt' ? 'txt' : 'csv';
+    const unit   = options.unit === 's' ? 's' : 'ms';
     const cols = options.columns?.length
       ? this.RR_EXPORT_COLUMNS.filter(c => options.columns.includes(c.key))
       : this.RR_EXPORT_COLUMNS;
@@ -2079,11 +2166,11 @@ const IO = {
 
     const rr    = recording.cleanRR || recording.rrMs;
     const sep   = format === 'txt' ? '\t' : ',';
-    const lines = format === 'txt' ? [] : [cols.map(c => c.label).join(sep)];
+    const lines = format === 'txt' ? [] : [cols.map(c => c.label(unit)).join(sep)];
     let t = 0;
     rr.forEach((v, i) => {
       t += v / 1000;
-      lines.push(cols.map(c => c.get(v, i, t)).join(sep));
+      lines.push(cols.map(c => c.get(v, i, t, unit)).join(sep));
     });
 
     const ext  = format === 'txt' ? 'txt' : 'csv';
@@ -2096,13 +2183,14 @@ const IO = {
     const rec = state.currentRecording;
     if (!rec) return;
     const format  = document.getElementById('dataExportFormat')?.value || 'csv';
+    const unit    = document.getElementById('dataExportUnit')?.value || 'ms';
     const columns = [];
     if (document.getElementById('dataExportColBeat')?.checked) columns.push('beat');
     if (document.getElementById('dataExportColRR')?.checked)   columns.push('rr');
     if (document.getElementById('dataExportColHR')?.checked)   columns.push('hr');
     if (document.getElementById('dataExportColCum')?.checked)  columns.push('cum');
     if (!columns.length) { UI.notify('Selecciona al menos una columna', 'error'); return; }
-    this.exportCSV(rec, { format, columns });
+    this.exportCSV(rec, { format, columns, unit });
     UI.closeModal('dataExportModal');
     UI.notify(`Datos exportados (${format.toUpperCase()})`, 'success');
   },
@@ -3199,12 +3287,23 @@ const UI = {
   closeModal(id) { document.getElementById(id)?.classList.remove('open'); },
 
   openImport() {
+    state.importQueue = [];
+    IO._updateQueueBadge();
     document.getElementById('importDetected').style.display = 'none';
     document.getElementById('importPreview').style.display = 'none';
     document.getElementById('importSettings').style.display = 'none';
     document.getElementById('importConfirmBtn').style.display = 'none';
     document.getElementById('fileInput').value = '';
+    document.getElementById('importName').value = '';
+    document.getElementById('importTags').value = '';
     this.openModal('importModal');
+  },
+
+  /** Cierra el modal de importación y descarta cualquier cola pendiente. */
+  cancelImport() {
+    state.importQueue = [];
+    state.importBuffer = null;
+    this.closeModal('importModal');
   },
 
   openMetadataModal() {
@@ -4211,11 +4310,54 @@ const App = {
     // Apply theme
     const themeVal = settings.find(s => s.key === 'theme');
     if (themeVal) this.applyTheme(themeVal.value);
+    // Reflect persisted values in the Settings form (bands, SampEn, unit…)
+    this._syncSettingsInputs();
+  },
+
+  /** Refleja state.settings en los campos del panel de Ajustes. Se llama tras
+   *  cargar la configuración persistida, para que los inputs no queden
+   *  mostrando siempre los valores por defecto del HTML. */
+  _syncSettingsInputs() {
+    const fields = ['vlfMin', 'vlfMax', 'lfMin', 'lfMax', 'hfMin', 'hfMax', 'sampEnM', 'sampEnR'];
+    for (const key of fields) {
+      const el = document.getElementById(key);
+      if (el) el.value = state.settings[key];
+    }
+    const rrSel = document.getElementById('rrUnitSetting');
+    if (rrSel) rrSel.value = state.settings.rrUnit;
   },
 
   async saveSetting(key, value) {
     state.settings[key] = value;
     await DB.put('settings', { key, value });
+  },
+
+  /** Persiste un ajuste numérico de análisis HRV (bandas espectrales, SampEn
+   *  m/r) y refresca de inmediato el análisis de la grabación activa — estos
+   *  valores alteran directamente los cálculos de frecuencia y no-linealidad,
+   *  así que dejarlos "guardados pero sin aplicar" sería confuso. */
+  async updateHRVSetting(key, value) {
+    const num = parseFloat(value);
+    if (isNaN(num)) return;
+    await this.saveSetting(key, num);
+    this.refreshCurrentAnalysis();
+  },
+
+  /** Recalcula fd/nl/comp de la grabación activa y de sus ventanas con los
+   *  ajustes actuales, y vuelve a renderizar si la vista de análisis está
+   *  abierta. No toca el resto de la biblioteca: recalcular todo sería
+   *  costoso e innecesario, ya que cada grabación se refresca sola al
+   *  seleccionarla (ver el fix de App.selectRecording más abajo). */
+  refreshCurrentAnalysis() {
+    const rec = state.currentRecording;
+    if (!rec) return;
+    const rr = rec.cleanRR || rec.rrMs;
+    if (!rr) return;
+    rec.fd   = HRV.frequencyDomain(rr);
+    rec.nl   = HRV.nonLinear(rr);
+    rec.comp = HRV.composite(rec.td, rec.fd, rec.nl, rr);
+    for (const w of (rec.windows || [])) w.analysis = WindowMgr._analyze(w);
+    if (state.currentView === 'analyze') UI.renderAnalysis(rec);
   },
 
   switchView(view) {
@@ -4258,11 +4400,15 @@ const App = {
   selectRecording(id) {
     const rec = state.recordings.find(r => r.id === id);
     if (!rec) return;
-    // Always recompute fd and comp fresh — prevents NaN from DB-stored stale spectral data
+    // Always recompute fd/nl/comp fresh — prevents NaN from DB-stored stale
+    // spectral data and picks up any HRV setting changed since import.
+    // rrMs MUST be passed to composite(): without it, stressIndex/dc/ac are
+    // silently dropped (their internal guards require rrMs.length).
     const rr = rec.cleanRR || rec.rrMs;
     if (rr) {
       rec.fd   = HRV.frequencyDomain(rr);
-      rec.comp = HRV.composite(rec.td, rec.fd, rec.nl);
+      rec.nl   = HRV.nonLinear(rr);
+      rec.comp = HRV.composite(rec.td, rec.fd, rec.nl, rr);
     }
     state.currentRecording = rec;
     state.activeWindowId   = rec.windows?.[0]?.id || null;
@@ -4320,9 +4466,17 @@ const App = {
   },
 
   async deleteFolder(id) {
-    if (!confirm('¿Eliminar esta carpeta? Las grabaciones en ella no se eliminarán.')) return;
+    if (!confirm('¿Eliminar esta carpeta? Las grabaciones en ella no se eliminarán (quedarán sin carpeta).')) return;
+    // Desasigna las grabaciones que apuntaban a esta carpeta para que no
+    // queden invisibles bajo un filtro que ya no existe.
+    for (const r of state.recordings.filter(r => r.folderId === id)) {
+      r.folderId = null;
+      await DB.put('recordings', r);
+    }
     await DB.del('folders', id);
+    if (state.filters.folderId === id) state.filters.folderId = null;
     await this.loadFolders();
+    await this.loadRecordings();
     UI.renderFolderList();
   },
 
@@ -4340,8 +4494,17 @@ const App = {
 
   async deleteTag(id) {
     if (!confirm('¿Eliminar esta etiqueta?')) return;
+    const tid = String(id);
+    // Quita la etiqueta de las grabaciones y del filtro activo para que
+    // nada quede apuntando a una etiqueta que ya no existe.
+    for (const r of state.recordings.filter(r => (r.tagIds || []).some(t => String(t) === tid))) {
+      r.tagIds = r.tagIds.filter(t => String(t) !== tid);
+      await DB.put('recordings', r);
+    }
+    state.filters.tags = state.filters.tags.filter(t => String(t) !== tid);
     await DB.del('tags', id);
     await this.loadTags();
+    await this.loadRecordings();
     UI.renderTagList();
   },
 
@@ -4474,7 +4637,9 @@ const App = {
     // Close modals on overlay click
     document.querySelectorAll('.modal-overlay').forEach(overlay => {
       overlay.addEventListener('click', e => {
-        if (e.target === overlay) overlay.classList.remove('open');
+        if (e.target !== overlay) return;
+        if (overlay.id === 'importModal') { state.importQueue = []; state.importBuffer = null; }
+        overlay.classList.remove('open');
       });
     });
 
@@ -4508,17 +4673,20 @@ const App = {
       e.preventDefault();
       _dragCnt = 0;
       if (_ov) _ov.style.display = 'none';
-      const file = e.dataTransfer?.files?.[0];
-      if (!file) return;
+      const files = e.dataTransfer?.files;
+      if (!files?.length) return;
       // Don't re-open if already inside the import drop zone (handled by IO.drop)
       if (e.target.closest?.('#importDrop')) return;
       UI.openImport();
-      requestAnimationFrame(() => IO.handleFile(file));
+      requestAnimationFrame(() => IO.handleFiles(files));
     });
 
     // Keyboard shortcuts
     document.addEventListener('keydown', e => {
-      if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+      if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.open').forEach(m => {
+        if (m.id === 'importModal') { state.importQueue = []; state.importBuffer = null; }
+        m.classList.remove('open');
+      });
       if (e.ctrlKey && e.key === 'i') { e.preventDefault(); UI.openImport(); }
     });
 

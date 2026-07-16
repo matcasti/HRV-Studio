@@ -420,25 +420,25 @@
           <div class="settings-item">
             <div><div class="si-label">Banda VLF</div><div class="si-sub">Frecuencia de banda VLF (Hz)</div></div>
             <div style="display:flex;gap:4px;align-items:center">
-              <input type="number" class="form-input" style="width:70px" id="vlfMin" value="0.003" step="0.001">
-              <span style="font-size:12px;color:var(--text-muted)">–</span>
-              <input type="number" class="form-input" style="width:70px" id="vlfMax" value="0.04" step="0.001">
+              <input type="number" class="form-input" style="width:70px" id="vlfMin" value="0.003" step="0.001" onchange="App.updateHRVSetting('vlfMin', this.value)">
+            <span style="font-size:12px;color:var(--text-muted)">–</span>
+            <input type="number" class="form-input" style="width:70px" id="vlfMax" value="0.04" step="0.001" onchange="App.updateHRVSetting('vlfMax', this.value)">
             </div>
           </div>
           <div class="settings-item">
             <div><div class="si-label">Banda LF</div><div class="si-sub">Frecuencia de banda LF (Hz)</div></div>
             <div style="display:flex;gap:4px;align-items:center">
-              <input type="number" class="form-input" style="width:70px" id="lfMin" value="0.04" step="0.01">
-              <span style="font-size:12px;color:var(--text-muted)">–</span>
-              <input type="number" class="form-input" style="width:70px" id="lfMax" value="0.15" step="0.01">
+              <input type="number" class="form-input" style="width:70px" id="lfMin" value="0.04" step="0.01" onchange="App.updateHRVSetting('lfMin', this.value)">
+            <span style="font-size:12px;color:var(--text-muted)">–</span>
+            <input type="number" class="form-input" style="width:70px" id="lfMax" value="0.15" step="0.01" onchange="App.updateHRVSetting('lfMax', this.value)">
             </div>
           </div>
           <div class="settings-item">
             <div><div class="si-label">Banda HF</div><div class="si-sub">Frecuencia de banda HF (Hz)</div></div>
             <div style="display:flex;gap:4px;align-items:center">
-              <input type="number" class="form-input" style="width:70px" id="hfMin" value="0.15" step="0.01">
-              <span style="font-size:12px;color:var(--text-muted)">–</span>
-              <input type="number" class="form-input" style="width:70px" id="hfMax" value="0.4" step="0.01">
+              <input type="number" class="form-input" style="width:70px" id="hfMin" value="0.15" step="0.01" onchange="App.updateHRVSetting('hfMin', this.value)">
+            <span style="font-size:12px;color:var(--text-muted)">–</span>
+            <input type="number" class="form-input" style="width:70px" id="hfMax" value="0.4" step="0.01" onchange="App.updateHRVSetting('hfMax', this.value)">
             </div>
           </div>
           <div class="settings-item">
@@ -451,11 +451,11 @@
           </div>
           <div class="settings-item">
             <div><div class="si-label">SampEn (m)</div><div class="si-sub">Longitud del patrón para SampEn/ApEn</div></div>
-            <input type="number" class="form-input" style="width:80px" id="sampEnM" value="2" min="1" max="4">
+            <input type="number" class="form-input" style="width:80px" id="sampEnM" value="2" min="1" max="4" onchange="App.updateHRVSetting('sampEnM', this.value)">
           </div>
           <div class="settings-item">
             <div><div class="si-label">SampEn (r)</div><div class="si-sub">Factor de tolerancia (× SDNN)</div></div>
-            <input type="number" class="form-input" style="width:80px" id="sampEnR" value="0.2" min="0.05" max="0.5" step="0.05">
+            <input type="number" class="form-input" style="width:80px" id="sampEnR" value="0.2" min="0.05" max="0.5" step="0.05" onchange="App.updateHRVSetting('sampEnR', this.value)">
           </div>
         </div>
         <div class="settings-group">
@@ -500,14 +500,17 @@
     <div class="modal-header">
       <span style="font-size:18px">📥</span>
       <span class="modal-title">Importar grabación RR</span>
-      <div class="modal-close" onclick="UI.closeModal('importModal')">✕</div>
+      <div class="modal-close" onclick="UI.cancelImport()">✕</div>
     </div>
     <div class="modal-body">
-      <div class="import-drop" id="importDrop" onclick="document.getElementById('fileInput').click()" ondragover="IO.dragover(event)" ondrop="IO.drop(event)">
+      <div class="import-drop" id="importDrop" onclick="document.getElementById('fileInput').click()" ondragover="IO.dragover(event)" ondragleave="IO.dragleave(event)" ondrop="IO.drop(event)">
         <div class="import-drop-icon">📁</div>
         <div class="import-drop-title">Arrastra archivos aquí o haz clic</div>
-        <div class="import-drop-sub">Formatos: CSV (.csv) o texto plano (.txt)</div>
-        <input type="file" id="fileInput" accept=".csv,.txt" style="display:none" onchange="IO.handleFile(this.files[0])" multiple>
+        <div class="import-drop-sub">Formatos: CSV (.csv) o texto plano (.txt) · puedes seleccionar varios</div>
+        <input type="file" id="fileInput" accept=".csv,.txt" style="display:none" onchange="IO.handleFiles(this.files)" multiple>
+      </div>
+      <div id="importQueueInfo" style="display:none;margin-top:10px;align-items:center;gap:6px;font-size:11px;color:var(--text-dim);background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px 10px">
+        📦 <strong id="importQueueCount" style="color:var(--accent)">0</strong>&nbsp;archivo(s) más en cola — se cargarán uno a uno tras confirmar cada uno
       </div>
       <div id="importDetected" style="display:none" class="import-detected"></div>
       <div id="importColSelector" style="display:none;margin-top:12px">
@@ -567,7 +570,7 @@
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="UI.closeModal('importModal')">Cancelar</button>
+      <button class="btn btn-secondary" onclick="UI.cancelImport()">Cancelar</button>
       <button class="btn btn-primary" id="importConfirmBtn" onclick="IO.confirmImport()" style="display:none">✓ Importar</button>
     </div>
   </div>
@@ -666,6 +669,13 @@
           <option value="txt">TXT — separado por tabulador, sin encabezado</option>
         </select>
       </div>
+      <div class="form-group">
+        <label class="form-label">Unidad de tiempo</label>
+        <select class="form-select" id="dataExportUnit">
+          <option value="ms">Milisegundos (ms)</option>
+          <option value="s">Segundos (s)</option>
+        </select>
+      </div>
       <div class="form-group" style="margin-bottom:0">
         <label class="form-label" style="margin-bottom:6px">Columnas a incluir</label>
         <div style="display:flex;flex-direction:column;gap:8px">
@@ -673,13 +683,13 @@
             <input type="checkbox" id="dataExportColBeat" checked> Nº de latido
           </label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;user-select:none">
-            <input type="checkbox" id="dataExportColRR" checked> Intervalo RR (ms)
+            <input type="checkbox" id="dataExportColRR" checked> Intervalo RR
           </label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;user-select:none">
             <input type="checkbox" id="dataExportColHR" checked> Frecuencia cardíaca (bpm)
           </label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;user-select:none">
-            <input type="checkbox" id="dataExportColCum" checked> Tiempo acumulado (s)
+            <input type="checkbox" id="dataExportColCum" checked> Tiempo acumulado
           </label>
         </div>
       </div>
