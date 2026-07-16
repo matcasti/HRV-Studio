@@ -30,7 +30,8 @@ const state = {
   activeWindowId: null,
   windowMode: false,    // true = user is drawing a new window
   windowDraft: null,    // {startBeat, endBeat} during drag
-  dynamicTab: 'sliding' // active tab in non-stationary panel
+  dynamicTab: 'sliding', // active tab in non-stationary panel
+  reportClinical: true  // true = incluir interpretación clínica en informes · false = modo paciente
 };
 
 // ===== METRIC INFO DEFINITIONS =====
@@ -2048,12 +2049,57 @@ const IO = {
     state.importBuffer = null;
   },
 
-  async exportCSV(recording) {
-    const rr = recording.cleanRR || recording.rrMs;
-    let csv = 'beat,rr_ms,hr_bpm,cumulative_s\n';
+  
+  /** Columnas disponibles para exportar los intervalos RR crudos (ver exportCSV). */
+  RR_EXPORT_COLUMNS: [
+    { key: 'beat', label: 'beat',         get: (v, i, t) => i + 1 },
+    { key: 'rr',   label: 'rr_ms',        get: (v, i, t) => v.toFixed(2) },
+    { key: 'hr',   label: 'hr_bpm',       get: (v, i, t) => (60000 / v).toFixed(2) },
+    { key: 'cum',  label: 'cumulative_s', get: (v, i, t) => t.toFixed(3) },
+  ],
+
+  /** Exporta los intervalos RR crudos de una grabación.
+   *  @param {object} recording
+   *  @param {object} [options]
+   *  @param {string[]} [options.columns] - claves de RR_EXPORT_COLUMNS a incluir (por defecto: todas)
+   *  @param {'csv'|'txt'} [options.format] - 'csv' = coma + encabezado (por defecto) · 'txt' = tabulador, sin encabezado
+   */
+  async exportCSV(recording, options = {}) {
+    if (!recording) return;
+    const format = options.format === 'txt' ? 'txt' : 'csv';
+    const cols = options.columns?.length
+      ? this.RR_EXPORT_COLUMNS.filter(c => options.columns.includes(c.key))
+      : this.RR_EXPORT_COLUMNS;
+    if (!cols.length) return;
+
+    const rr    = recording.cleanRR || recording.rrMs;
+    const sep   = format === 'txt' ? '\t' : ',';
+    const lines = format === 'txt' ? [] : [cols.map(c => c.label).join(sep)];
     let t = 0;
-    rr.forEach((v, i) => { t += v / 1000; csv += `${i+1},${v.toFixed(2)},${(60000/v).toFixed(2)},${t.toFixed(3)}\n`; });
-    this._download(csv, `${recording.name}_RR.csv`, 'text/csv');
+    rr.forEach((v, i) => {
+      t += v / 1000;
+      lines.push(cols.map(c => c.get(v, i, t)).join(sep));
+    });
+
+    const ext  = format === 'txt' ? 'txt' : 'csv';
+    const mime = format === 'txt' ? 'text/plain' : 'text/csv';
+    this._download(lines.join('\n') + '\n', `${recording.name}_RR.${ext}`, mime);
+  },
+
+  /** Lee el formato y las columnas seleccionadas en #dataExportModal y exporta la grabación activa. */
+  exportRRDataFromModal() {
+    const rec = state.currentRecording;
+    if (!rec) return;
+    const format  = document.getElementById('dataExportFormat')?.value || 'csv';
+    const columns = [];
+    if (document.getElementById('dataExportColBeat')?.checked) columns.push('beat');
+    if (document.getElementById('dataExportColRR')?.checked)   columns.push('rr');
+    if (document.getElementById('dataExportColHR')?.checked)   columns.push('hr');
+    if (document.getElementById('dataExportColCum')?.checked)  columns.push('cum');
+    if (!columns.length) { UI.notify('Selecciona al menos una columna', 'error'); return; }
+    this.exportCSV(rec, { format, columns });
+    UI.closeModal('dataExportModal');
+    UI.notify(`Datos exportados (${format.toUpperCase()})`, 'success');
   },
 
   async exportMetricsCSV(recording) {
@@ -2335,12 +2381,14 @@ const IO = {
   exportReportHTML() {
     const rec = state.currentRecording;
     if (!rec) { UI.notify('Selecciona una grabación primero', 'error'); return; }
-    const html = this._buildStandaloneReportHTML(rec);
-    this._download(html, `${rec.name}_reporte.html`, 'text/html');
+    const clinical = state.reportClinical;
+    const html = this._buildStandaloneReportHTML(rec, clinical);
+    const suffix = clinical ? '_clinico' : '_paciente';
+    this._download(html, `${rec.name}_reporte${suffix}.html`, 'text/html');
     UI.notify('Reporte HTML exportado', 'success');
   },
   
-  _buildStandaloneReportHTML(rec) {
+  _buildStandaloneReportHTML(rec, clinical = state.reportClinical) {
     const m    = MathUtils.fmt;
     const meta = rec.metadata || {};
     const { td, fd, nl, comp } = rec;
@@ -2378,10 +2426,17 @@ const IO = {
     const now     = new Date().toLocaleString('es');
     const recDate = new Date(rec.created).toLocaleString('es');
 
-    const row  = (label, val, unit, normal, interp) =>
-      `<tr><td class="lc">${label}</td><td class="vc">${val ?? '—'}</td><td class="uc">${unit}</td><td class="nc">${normal}</td><td class="ic">${interp}</td></tr>`;
+    const row  = (label, val, unit, normal, interp) => clinical
+      ? `<tr><td class="lc">${label}</td><td class="vc">${val ?? '—'}</td><td class="uc">${unit}</td><td class="nc">${normal}</td><td class="ic">${interp}</td></tr>`
+      : `<tr><td class="lc">${label}</td><td class="vc">${val ?? '—'}</td><td class="uc">${unit}</td><td class="nc">${normal}</td></tr>`;
+    const theadRow = firstLabel => clinical
+      ? `<tr><th>${firstLabel}</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr>`
+      : `<tr><th>${firstLabel}</th><th>Valor</th><th>Unidad</th><th>Rango normal</th></tr>`;
     const mrow = (label, val) =>
       `<tr><th>${label}</th><td ${!val ? 'class="nd"' : ''}>${val || '—'}</td></tr>`;
+    const prsaNote = p => clinical
+      ? `L = ${p.L} latidos. DC &gt; 4.5 ms indica actividad vagal preservada. Predictor independiente de mortalidad cardíaca súbita (HR 5.6× si DC &lt; 2.5 ms, Bauer et al. Lancet 2006).`
+      : `L = ${p.L} latidos. Refleja la capacidad del corazón para acelerar y desacelerar su ritmo; valores de DC más altos suelen asociarse a un buen tono vagal.`;
 
     return `<!DOCTYPE html>
       <html lang="es">
@@ -2497,6 +2552,7 @@ const IO = {
           <div class="rh-pill">Grabación<strong>${recDate}</strong></div>
           <div class="rh-pill">N latidos<strong>${rr?.length ?? '—'}</strong></div>
           <div class="rh-pill">Duración<strong>${td?.totalDuration ? (td.totalDuration/60).toFixed(1)+' min' : '—'}</strong></div>
+          <div class="rh-pill">Tipo<strong>${clinical ? 'Clínico' : 'Paciente'}</strong></div>
           <div class="rh-pill">Software<strong>HRV Studio v1.0</strong></div>
         </div>
       </div>
@@ -2574,7 +2630,7 @@ const IO = {
       ${td ? `<div class="sec">
         <div class="sec-title"><span class="sec-title-bar"></span>Dominio Temporal</div>
         <table class="mt">
-          <thead><tr><th>Métrica</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr></thead>
+          <thead>${theadRow('Métrica')}</thead>
           <tbody>
             ${row('Media RR', m(td.mean,1), 'ms', MI.meanRR.r, MI.meanRR.a)}
             ${row('FC media', m(td.meanHR,1), 'bpm', '60–100 bpm', 'Taquicardia >100 bpm o bradicardia <60 bpm pueden alterar interpretación de VFC')}
@@ -2598,7 +2654,7 @@ const IO = {
       ${fd ? `<div class="sec">
         <div class="sec-title"><span class="sec-title-bar"></span>Dominio Frecuencial — Periodograma de Lomb-Scargle (no paramétrico)</div>
         <table class="mt">
-          <thead><tr><th>Banda / Métrica</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr></thead>
+          <thead>${theadRow('Banda / Métrica')}</thead>
           <tbody>
             ${row('VLF (0.003–0.04 Hz)', fd.vlf, 'ms²', MI.vlf.r, MI.vlf.a)}
             ${row('LF (0.04–0.15 Hz)', fd.lf, 'ms²', MI.lf.r, MI.lf.a)}
@@ -2616,7 +2672,7 @@ const IO = {
       ${nl ? `<div class="sec">
         <div class="sec-title"><span class="sec-title-bar"></span>Análisis No Lineal</div>
         <table class="mt">
-          <thead><tr><th>Métrica</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr></thead>
+          <thead>${theadRow('Métrica')}</thead>
           <tbody>
             ${row('SD1 — Poincaré (corto plazo)', m(nl.sd1,1), 'ms', MI.sd1.r, MI.sd1.a)}
             ${row('SD2 — Poincaré (largo plazo)', m(nl.sd2,1), 'ms', MI.sd2.r, MI.sd2.a)}
@@ -2634,7 +2690,7 @@ const IO = {
       ${comp ? `<div class="sec">
         <div class="sec-title"><span class="sec-title-bar"></span>Índices Compuestos y Balance Autonómico</div>
         <table class="mt">
-          <thead><tr><th>Índice</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr></thead>
+          <thead>${theadRow('Índice')}</thead>
           <tbody>
             ${comp.cvi != null ? row('CVI — Cardiac Vagal Index', m(comp.cvi,3), '—', MI.cvi.r, MI.cvi.a) : ''}
             ${comp.csi != null ? row('CSI — Cardiac Sympathetic Index', m(comp.csi,2), '—', MI.csi.r, MI.csi.a) : ''}
@@ -2651,13 +2707,13 @@ const IO = {
       ${prsa ? `<div class="sec">
         <div class="sec-title"><span class="sec-title-bar"></span>PRSA — Phase-Rectified Signal Averaging (Bauer et al. 2006)</div>
         <table class="mt">
-          <thead><tr><th>Índice</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr></thead>
+          <thead>${theadRow('Índice')}</thead>
           <tbody>
             ${row('DC — Capacidad de Desaceleración', m(prsa.DC,2), 'ms', MI.dc.r, MI.dc.a)}
             ${row('AC — Capacidad de Aceleración', m(prsa.AC,2), 'ms', MI.ac.r, MI.ac.a)}
           </tbody>
         </table>
-        <div class="note">L = ${prsa.L} latidos. DC &gt; 4.5 ms indica actividad vagal preservada. Predictor independiente de mortalidad cardíaca súbita (HR 5.6× si DC &lt; 2.5 ms, Bauer et al. Lancet 2006).</div>
+        <div class="note">${prsaNote(prsa)}</div>
       </div>` : ''}
 
       ${winChartData.length ? `
@@ -3834,15 +3890,34 @@ const UI = {
       });
     }
   },
+  
+   openDataExportModal() {
+     const rec = state.currentRecording;
+     if (!rec) { this.notify('Selecciona una grabación primero', 'error'); return; }
+     this.openModal('dataExportModal');
+   },
+ 
 
   openReportModal() {
     const rec = state.currentRecording;
     if (!rec) { this.notify('Selecciona una grabación primero', 'error'); return; }
+    const t = document.getElementById('reportClinicalToggle');
+    if (t) t.classList.toggle('on', state.reportClinical);
     document.getElementById('reportBody').innerHTML = this._buildReportHTML(rec);
     this.openModal('reportModal');
   },
+ 
+   /** Alterna entre informe clínico (con "Significado clínico si alterado") e informe
+    *  orientado al paciente (solo valor + rango normal). Re-renderiza la vista previa. */
+   toggleReportClinical() {
+     state.reportClinical = !state.reportClinical;
+     const t = document.getElementById('reportClinicalToggle');
+     if (t) t.classList.toggle('on', state.reportClinical);
+     const rec = state.currentRecording;
+     if (rec) document.getElementById('reportBody').innerHTML = this._buildReportHTML(rec);
+   },
 
-  _buildReportHTML(rec) {
+  _buildReportHTML(rec, clinical = state.reportClinical) {
     const m = MathUtils.fmt;
     const meta = rec.metadata || {};
     const { td, fd, nl, comp } = rec;
@@ -3852,9 +3927,16 @@ const UI = {
     const recDate = new Date(rec.created).toLocaleString('es');
     const MI = METRIC_INFO; // shorthand
 
-    const row = (label, val, unit, normal, interp) =>
-      `<tr><td>${label}</td><td class="mono">${val}</td><td>${unit}</td><td>${normal}</td><td>${interp}</td></tr>`;
-
+    const row = (label, val, unit, normal, interp) => clinical
+      ? `<tr><td>${label}</td><td class="mono">${val}</td><td>${unit}</td><td>${normal}</td><td>${interp}</td></tr>`
+      : `<tr><td>${label}</td><td class="mono">${val}</td><td>${unit}</td><td>${normal}</td></tr>`;
+    const theadRow = firstLabel => clinical
+      ? `<tr><th>${firstLabel}</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr>`
+      : `<tr><th>${firstLabel}</th><th>Valor</th><th>Unidad</th><th>Rango normal</th></tr>`;
+    const prsaNote = p => clinical
+      ? `L = ${p.L} latidos. DC > 4.5 ms indica actividad vagal preservada. Predictor independiente de mortalidad cardíaca.`
+      : `L = ${p.L} latidos. Refleja la capacidad del corazón para acelerar y desacelerar su ritmo; valores de DC más altos suelen asociarse a un buen tono vagal.`;
+ 
     return `
     <div style="font-family:'Outfit',sans-serif">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;padding-bottom:16px;border-bottom:2px solid var(--accent)">
@@ -3866,6 +3948,7 @@ const UI = {
           <div>Generado: ${now}</div>
           <div>Grabación: ${recDate}</div>
           <div>N = ${rr?.length ?? '—'} latidos · ${td?.totalDuration ? (td.totalDuration/60).toFixed(1) + ' min' : '—'}</div>
+          <div>Tipo de informe: <strong style="color:var(--text)">${clinical ? 'Clínico' : 'Paciente'}</strong></div>
           <div style="font-weight:600;color:var(--text)">HRV Studio v1.0</div>
         </div>
       </div>
@@ -3886,7 +3969,7 @@ const UI = {
       ${td ? `<div class="report-section">
         <div class="report-section-title">DOMINIO TEMPORAL</div>
         <table class="report-table">
-          <tr><th>Métrica</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr>
+          ${theadRow('Métrica')}
           ${row('Media RR', m(td.mean,1), 'ms', MI.meanRR.r, MI.meanRR.a)}
           ${row('FC media', m(td.meanHR,1), 'bpm', '60–100 bpm', 'Taquicardia > 100 bpm o bradicardia < 60 bpm pueden alterar interpretación de VFC')}
           ${row('FC mín / FC máx', m(td.minHR,1)+' / '+m(td.maxHR,1), 'bpm', '—', 'Rango estrecho: rigidez autonómica; rango amplio: buena reserva')}
@@ -3908,7 +3991,7 @@ const UI = {
       ${fd ? `<div class="report-section">
         <div class="report-section-title">DOMINIO FRECUENCIAL — Lomb-Scargle (no paramétrico)</div>
         <table class="report-table">
-          <tr><th>Banda / Métrica</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr>
+          ${theadRow('Banda / Métrica')}
           ${row('VLF (0.003–0.04 Hz)', fd.vlf, 'ms²', MI.vlf.r, MI.vlf.a)}
           ${row('LF (0.04–0.15 Hz)', fd.lf, 'ms²', MI.lf.r, MI.lf.a)}
           ${row('HF (0.15–0.4 Hz)', fd.hf, 'ms²', MI.hf.r, MI.hf.a)}
@@ -3924,7 +4007,7 @@ const UI = {
       ${nl ? `<div class="report-section">
         <div class="report-section-title">ANÁLISIS NO LINEAL</div>
         <table class="report-table">
-          <tr><th>Métrica</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr>
+          ${theadRow('Métrica')}
           ${row('SD1 (Poincaré)', m(nl.sd1,1), 'ms', MI.sd1.r, MI.sd1.a)}
           ${row('SD2 (Poincaré)', m(nl.sd2,1), 'ms', MI.sd2.r, MI.sd2.a)}
           ${row('SD1/SD2', m(nl.sd1sd2,3), '—', MI.sd1sd2.r, MI.sd1sd2.a)}
@@ -3940,7 +4023,7 @@ const UI = {
       ${comp ? `<div class="report-section">
         <div class="report-section-title">ÍNDICES COMPUESTOS Y BALANCE AUTONÓMICO</div>
         <table class="report-table">
-          <tr><th>Índice</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr>
+          ${theadRow('Índice')}
           ${comp.cvi != null ? row('CVI (Cardiac Vagal Index)', m(comp.cvi,3), '—', MI.cvi.r, MI.cvi.a) : ''}
           ${comp.csi != null ? row('CSI (Cardiac Sympathetic Index)', m(comp.csi,2), '—', MI.csi.r, MI.csi.a) : ''}
           ${comp.gsi != null ? row('GSI (Índice Geométrico SV)', m(comp.gsi,1), 'ms', MI.gsi.r, MI.gsi.a) : ''}
@@ -3955,11 +4038,11 @@ const UI = {
       ${prsa ? `<div class="report-section">
         <div class="report-section-title">PRSA — PHASE-RECTIFIED SIGNAL AVERAGING (Bauer et al. 2006)</div>
         <table class="report-table">
-          <tr><th>Índice</th><th>Valor</th><th>Unidad</th><th>Rango normal</th><th>Significado clínico si alterado</th></tr>
+          ${theadRow('Índice')}
           ${row('DC — Capacidad de Desaceleración', m(prsa.DC,2), 'ms', MI.dc.r, MI.dc.a)}
           ${row('AC — Capacidad de Aceleración', m(prsa.AC,2), 'ms', MI.ac.r, MI.ac.a)}
         </table>
-        <div style="font-size:10px;color:var(--text-muted);margin-top:6px">L = ${prsa.L} latidos. DC > 4.5 ms indica actividad vagal preservada. Predictor independiente de mortalidad cardíaca.</div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:6px">${prsaNote(prsa)}</div>
       </div>` : ''}
 
       ${IO._buildWindowsReportSection(rec.windows || [], false)}
@@ -3988,10 +4071,10 @@ const UI = {
       return;
     }
     container.innerHTML = `
-      <div class="export-card" onclick="IO.exportCSV(state.currentRecording)">
+      <div class="export-card" onclick="UI.openDataExportModal()">
         <div class="export-card-icon">📊</div>
         <div class="export-card-title">CSV de intervalos RR</div>
-        <div class="export-card-sub">Beat, RR(ms), HR(bpm), tiempo acumulado</div>
+        <div class="export-card-sub">Elige columnas y formato (CSV/TXT)</div>
       </div>
       <div class="export-card" onclick="IO.exportMetricsCSV(state.currentRecording)">
         <div class="export-card-icon">📋</div>

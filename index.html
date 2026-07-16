@@ -650,12 +650,57 @@
   </div>
 </div>
 
+<!-- DATA EXPORT MODAL -->
+<div class="modal-overlay" id="dataExportModal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <span style="font-size:18px">📊</span>
+      <span class="modal-title">Exportar intervalos RR</span>
+      <div class="modal-close" onclick="UI.closeModal('dataExportModal')">✕</div>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Formato de archivo</label>
+        <select class="form-select" id="dataExportFormat">
+          <option value="csv">CSV — separado por comas, con encabezado</option>
+          <option value="txt">TXT — separado por tabulador, sin encabezado</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label" style="margin-bottom:6px">Columnas a incluir</label>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;user-select:none">
+            <input type="checkbox" id="dataExportColBeat" checked> Nº de latido
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;user-select:none">
+            <input type="checkbox" id="dataExportColRR" checked> Intervalo RR (ms)
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;user-select:none">
+            <input type="checkbox" id="dataExportColHR" checked> Frecuencia cardíaca (bpm)
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;user-select:none">
+            <input type="checkbox" id="dataExportColCum" checked> Tiempo acumulado (s)
+          </label>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="UI.closeModal('dataExportModal')">Cancelar</button>
+      <button class="btn btn-primary" onclick="IO.exportRRDataFromModal()">⬇ Exportar</button>
+    </div>
+  </div>
+</div>
+
 <!-- REPORT MODAL -->
 <div class="modal-overlay" id="reportModal">
   <div class="modal modal-xl">
     <div class="modal-header">
       <span style="font-size:18px">📄</span>
       <span class="modal-title">Reporte HRV</span>
+       <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;margin-right:2px">
+         Interpretación clínica
+         <div class="toggle on" id="reportClinicalToggle" onclick="UI.toggleReportClinical()"></div>
+       </label>
       <div class="modal-close" onclick="UI.closeModal('reportModal')">✕</div>
     </div>
     <div class="modal-body" id="reportBody" style="font-size:12px"></div>
